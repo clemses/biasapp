@@ -3,14 +3,15 @@ from datetime import datetime
 import pandas as pd
 import streamlit as st
 
-st.set_page_config(page_title="Bias Dashboard – Enhanced Ruleset", layout="wide")
-st.title("📊 Bias Dashboard – Structure + Volume & Time-Based Signals")
+st.set_page_config(page_title="Bias Dashboard", layout="wide")
+st.title("📊 Bias Dashboard – Structure + Volume & Time (Optional) + Export")
 
-# === FILE UPLOAD ===
-st.sidebar.header("📂 Upload Daily CSV File")
-uploaded_file = st.sidebar.file_uploader("Upload CSV", type=["csv", "txt"])
+# === UPLOAD FILES ===
+st.sidebar.header("📂 Upload CSVs")
+daily_file = st.sidebar.file_uploader("Upload Daily CSV", type=["csv", "txt"])
+fourh_file = st.sidebar.file_uploader("Upload 4H CSV", type=["csv", "txt"])
 
-# === DATA CLEANING ===
+# === CLEAN DATA ===
 def clean_df(df):
     df.columns = df.columns.str.strip()
     col_map = {
@@ -22,7 +23,8 @@ def clean_df(df):
         '# of Trades': 'Trades'
     }
     df = df.rename(columns=col_map)
-    required = ['Date', 'Open', 'Close', 'POC', 'VAL', 'VAH', 'VWAP', 'Volume', 'Trades']
+    required = ['Date', 'Open', 'Close', 'POC', 'VAL', 'VAH', 'VWAP', 'Volume']
+    df['Trades'] = df['Trades'] if 'Trades' in df.columns else None
     missing = [col for col in required if col not in df.columns]
     if missing:
         st.error(f"Missing columns: {', '.join(missing)}")
@@ -30,72 +32,96 @@ def clean_df(df):
     df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
     for col in required[1:]:
         df[col] = pd.to_numeric(df[col], errors='coerce')
-    return df.dropna().sort_values("Date").reset_index(drop=True)
+    if 'Trades' in df.columns:
+        df['Trades'] = pd.to_numeric(df['Trades'], errors='coerce')
+    return df.dropna(subset=['Date']).sort_values("Date").reset_index(drop=True)
 
-# === INTERPRETATION LOGIC ===
+# === SCORING + LOGIC ===
 def interpret_bias(curr, window):
     va_range = curr["VAH"] - curr["VAL"]
     center = curr["VAL"] + va_range / 2
-    bias = []
+    summary = []
     reco = []
+    score = 0
 
-    # Structural analysis
     if abs(curr["POC"] - center) < va_range * 0.1:
-        bias.append("POC near center → balanced")
+        summary.append("POC near center → balanced"); score += 1
     if curr["POC"] < window["POC"].mean():
-        bias.append("POC falling → bearish migration")
+        summary.append("POC falling → bearish migration"); score += 1
     if abs(curr["VWAP"] - curr["POC"]) < va_range * 0.1:
-        bias.append("VWAP ≈ POC → fair value consensus")
-    if curr["Close"] < curr["VAL"] and curr["Close"] > curr["Open"]:
-        bias.append("Failed breakdown (below VAL rejected)")
-    if curr["Close"] > curr["VAL"] and abs(curr["Close"] - curr["VAL"]) < va_range * 0.2:
-        reco.append("🟢 Reversal: VAL tested and rejected")
-    if abs(curr["VWAP"] - curr["POC"]) < va_range * 0.1:
-        reco.append("📯 POC ≈ VWAP → fade extremes")
+        summary.append("VWAP ≈ POC → fair value zone"); score += 1
+        reco.append("📯 Fade extremes")
 
-    # Volume and trade count logic
+    if curr["Close"] < curr["VAL"] and curr["Close"] > curr["Open"]:
+        summary.append("Failed breakdown (below VAL rejected)"); score += 1
+    if curr["Close"] > curr["VAL"] and abs(curr["Close"] - curr["VAL"]) < va_range * 0.2:
+        reco.append("🟢 Reversal: VAL tested and rejected"); score += 1
+
     avg_vol = window["Volume"].mean()
     if curr["Volume"] > 1.3 * avg_vol:
-        bias.append("High volume day → expansion or strong interest")
+        summary.append("High volume → expansion or strong interest"); score += 1
         if abs(curr["Close"] - curr["Open"]) < va_range * 0.2:
-            bias.append("Volume spike but small body → absorption")
-            reco.append("Fade reaction unless confirmed")
+            summary.append("Volume spike but small body → absorption")
+            reco.append("Fade unless confirmed")
 
-    avg_trades = window["Trades"].mean()
-    if curr["Trades"] < 0.8 * avg_trades and abs(curr["Close"] - curr["Open"]) > va_range * 0.5:
-        bias.append("Large range but low trade count → inefficient move")
-        reco.append("Caution: may reverse if no follow-through")
+    if 'Trades' in curr and curr['Trades'] and window['Trades'].notna().sum() > 0:
+        avg_trades = window["Trades"].mean()
+        if curr["Trades"] < 0.8 * avg_trades and abs(curr["Close"] - curr["Open"]) > va_range * 0.5:
+            summary.append("Large range but low trade count → inefficient move")
+            reco.append("⚠️ Potential fade setup")
 
-    if curr["Volume"] < 0.7 * avg_vol and va_range < (window["VAH"] - window["VAL"]).mean() * 0.7:
-        bias.append("Low volume + narrow VA → coiling")
-        reco.append("Watch for breakout or trap behavior")
+    return summary, reco, score
 
-    return bias, reco
+# === DISPLAY LOGIC ===
+def analyze(df, tf_name):
+    st.subheader(f"📈 {tf_name} Bias Interpretation")
+    dates = df["Date"].dt.date.unique()
+    selected = st.date_input(f"Select {tf_name} Candle", value=dates[-1], key=tf_name)
+    lookback = st.slider(f"Lookback for {tf_name}", 3, 10, 5, key=f"{tf_name}_slider")
 
-# === MAIN DISPLAY ===
-if uploaded_file:
-    df = clean_df(pd.read_csv(uploaded_file))
-    if not df.empty:
-        dates = df["Date"].dt.date.unique()
-        selected_date = st.date_input("Select Candle Date", value=dates[-1], min_value=min(dates), max_value=max(dates))
-        lookback = st.slider("Lookback candles", 3, 10, 5)
+    if selected not in df["Date"].dt.date.values:
+        st.warning("Date not in dataset."); return
 
-        if selected_date not in df["Date"].dt.date.values:
-            st.warning("Date not in dataset.")
-        else:
-            idx = df[df["Date"].dt.date == selected_date].index[0]
-            if idx < lookback:
-                st.warning("Not enough lookback candles.")
-            else:
-                window = df.iloc[idx - lookback:idx]
-                curr = df.iloc[idx]
-                bias, reco = interpret_bias(curr, window)
+    idx = df[df["Date"].dt.date == selected].index[0]
+    if idx < lookback:
+        st.warning("Not enough candles for lookback."); return
 
-                st.markdown("### 🧠 Bias Interpretation")
-                for b in bias:
-                    st.write("- " + b)
-                st.markdown("### 🎯 Trade Recommendation")
-                for r in reco:
-                    st.write("- " + r)
-                st.markdown("### 📌 Key Price Levels")
-                st.code(f"VAL: {curr['VAL']:.2f} | POC: {curr['POC']:.2f} | VAH: {curr['VAH']:.2f} | VWAP: {curr['VWAP']:.2f} | Close: {curr['Close']:.2f} | Volume: {curr['Volume']:.0f} | Trades: {curr['Trades']:.0f}")
+    window = df.iloc[idx - lookback:idx]
+    curr = df.iloc[idx]
+    summary, reco, score = interpret_bias(curr, window)
+
+    st.markdown("### 🧠 Interpretation")
+    for s in summary: st.write("- " + s)
+    st.markdown("### 🎯 Trade Recommendation")
+    for r in reco: st.write("- " + r)
+
+    st.markdown("### 📌 Key Levels")
+    st.code(f"VAL: {curr['VAL']:.2f} | POC: {curr['POC']:.2f} | VAH: {curr['VAH']:.2f} | VWAP: {curr['VWAP']:.2f} | Close: {curr['Close']:.2f} | Volume: {curr['Volume']:.0f}")
+
+    st.markdown("### 🧾 Journal Export")
+    export = pd.DataFrame([{
+        "Date": curr["Date"].date(),
+        "Timeframe": tf_name,
+        "Score": score,
+        "Close": curr["Close"],
+        "POC": curr["POC"],
+        "VAL": curr["VAL"],
+        "VAH": curr["VAH"],
+        "VWAP": curr["VWAP"],
+        "Volume": curr["Volume"],
+        "Summary": "; ".join(summary),
+        "Recommendation": "; ".join(reco)
+    }])
+    st.dataframe(export)
+    st.download_button("📥 Download Summary", export.to_csv(index=False).encode('utf-8'), file_name=f"{tf_name}_bias_summary.csv")
+
+# === MAIN EXECUTION ===
+if daily_file:
+    df_daily = clean_df(pd.read_csv(daily_file))
+    if not df_daily.empty:
+        analyze(df_daily, "Daily")
+
+if fourh_file:
+    df_4h = clean_df(pd.read_csv(fourh_file))
+    if not df_4h.empty:
+        analyze(df_4h, "4H")
