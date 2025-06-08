@@ -1,125 +1,121 @@
-import streamlit as st
+
+from datetime import datetime
 import pandas as pd
+import streamlit as st
 
-st.title("📊 Bias & Trade App – Sierra Chart TXT + Timestamp Support")
+st.set_page_config(page_title="Bias Dashboard – Enhanced", layout="wide")
+st.title("📊 Enhanced Bias Dashboard – Daily & 4H Pattern Analysis")
 
-st.sidebar.header("📁 Upload Files")
-daily_file = st.sidebar.file_uploader("Upload Daily File", type=["csv", "txt"])
-h4_file = st.sidebar.file_uploader("Upload 4H File", type=["csv", "txt"])
+# === SIDEBAR UPLOAD ===
+st.sidebar.header("📂 Upload CSV Files")
+daily_file = st.sidebar.file_uploader("Upload Daily CSV", type=["csv", "txt"])
+fourh_file = st.sidebar.file_uploader("Upload 4H CSV", type=["csv", "txt"])
 
-def load_file(file):
-    try:
-        df = pd.read_csv(file)
-    except:
-        file.seek(0)
-        df = pd.read_csv(file, delimiter='\t')
-    return df
-
+# === CLEANING FUNCTION ===
 def clean_df(df):
-    df.columns = df.columns.str.strip().str.replace('"', '')
-    df.rename(columns={
-        "Open": "Open", "Last": "Close", "Point of Control": "POC",
-        "Value Area High Value": "VAH", "Value Area Low Value": "VAL",
-        "Date": "Date", "Time": "Time", "Volume Weighted Average Price": "VWAP"
-    }, inplace=True)
-    df["Date"] = pd.to_datetime(df["Date"].astype(str) + " " + df["Time"].astype(str), errors="coerce") if "Time" in df else pd.to_datetime(df["Date"], errors="coerce")
-    df.dropna(subset=["Date", "Open", "Close", "POC", "VAH", "VAL"], inplace=True)
-    df.sort_values("Date", inplace=True)
-    return df
+    df.columns = df.columns.str.strip()
+    col_map = {
+        'Last': 'Close',
+        'Point of Control': 'POC',
+        'Value Area Low Value': 'VAL',
+        'Value Area High Value': 'VAH',
+        'Volume Weighted Average Price': 'VWAP'
+    }
+    df = df.rename(columns=col_map)
+    required = ['Date', 'Open', 'Close', 'POC', 'VAL', 'VAH']
+    missing = [col for col in required if col not in df.columns]
+    if missing:
+        st.error(f"❌ Missing columns: {', '.join(missing)}")
+        return pd.DataFrame()
+    df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
+    for col in required[1:]:
+        df[col] = pd.to_numeric(df[col], errors='coerce')
+    return df.dropna().sort_values("Date").reset_index(drop=True)
 
-def interpret_bias(current, reference):
-    notes = []
-    va_width_today = current["VAH"] - current["VAL"]
-    va_width_yesterday = reference["VAH"] - reference["VAL"]
+# === ANALYSIS FUNCTION ===
+def analyze_candle_bias(df, date_selected, lookback):
+    if df.empty or date_selected not in df["Date"].dt.date.values:
+        return None, None
 
-    poc_pos = (current["POC"] - current["VAL"]) / va_width_today if va_width_today else 0.5
-    if poc_pos > 0.66:
-        notes.append("POC near VAH → buyers dominant")
-    elif poc_pos < 0.33:
-        notes.append("POC near VAL → sellers dominant")
+    idx = df[df["Date"].dt.date == date_selected].index[0]
+    if idx < lookback:
+        return None, None
+
+    window = df.iloc[idx - lookback:idx]
+    curr = df.iloc[idx]
+
+    bias_explanation = []
+    trade_reco = []
+
+    # POC Trend
+    poc_trend = "POC is rising" if curr["POC"] > window["POC"].mean() else "POC is falling"
+    bias_explanation.append(poc_trend)
+    if "rising" in poc_trend:
+        trade_reco.append("Look for long continuation")
     else:
-        notes.append("POC near center → balanced")
+        trade_reco.append("Look for short opportunities")
 
-    if current["POC"] > reference["POC"]:
-        notes.append("POC rising → bullish migration")
-    elif current["POC"] < reference["POC"]:
-        notes.append("POC falling → bearish migration")
+    # Value Area Compression
+    va_now = curr["VAH"] - curr["VAL"]
+    va_avg = (window["VAH"] - window["VAL"]).mean()
+    if va_now < va_avg * 0.7:
+        bias_explanation.append("Value area is compressed")
+        trade_reco.append("Watch for breakout from range")
 
-    if va_width_today > va_width_yesterday * 1.3:
-        notes.append("VA expanding → volatility increasing")
-    elif va_width_today < va_width_yesterday * 0.7:
-        notes.append("VA compressing → breakout potential")
+    # Close vs VAL/VAH
+    if abs(curr["Close"] - curr["VAL"]) < va_now * 0.2:
+        bias_explanation.append("Close near VAL")
+        trade_reco.append("Possible long from lower range")
+    if abs(curr["Close"] - curr["VAH"]) < va_now * 0.2:
+        bias_explanation.append("Close near VAH")
+        trade_reco.append("Consider short near upper range")
 
-    if "VWAP" in current and abs(current["VWAP"] - current["POC"]) < 3:
-        notes.append("VWAP ≈ POC → fair value consensus")
-    elif "VWAP" in current:
-        notes.append("VWAP far from POC → divergence")
+    # Candle Bias
+    if curr["Close"] > curr["Open"]:
+        bias_explanation.append("Candle closed bullish")
+    elif curr["Close"] < curr["Open"]:
+        bias_explanation.append("Candle closed bearish")
 
-    if current["High"] > current["VAH"] and current["Close"] < current["VAH"]:
-        notes.append("Failed breakout (above VAH rejected)")
-    if current["Low"] < current["VAL"] and current["Close"] > current["VAL"]:
-        notes.append("Failed breakdown (below VAL rejected)")
+    return bias_explanation, trade_reco
 
-    if current["Close"] > current["POC"] and current["Volume"] > reference["Volume"]:
-        notes.append("Close above POC + rising volume → bullish conviction")
-    elif current["Close"] < current["POC"] and current["Volume"] > reference["Volume"]:
-        notes.append("Close below POC + rising volume → bearish conviction")
-
-    return notes
-
-def generate_trade_recommendations(current, reference):
-    recs = []
-    thin_zone = current["VAH"] - current["VAL"] < (reference["VAH"] - reference["VAL"]) * 0.6
-
-    if current["Close"] > current["POC"] and current["POC"] > reference["POC"]:
-        recs.append("🟢 Long bias: price closing above rising POC.")
-
-    if current["Close"] < current["POC"] and current["POC"] < reference["POC"]:
-        recs.append("🔴 Short bias: price closing below falling POC.")
-
-    if current["High"] > current["VAH"] and current["Close"] < current["VAH"]:
-        recs.append("🔴 Fade breakout: high rejected above VAH.")
-
-    if current["Low"] < current["VAL"] and current["Close"] > current["VAL"]:
-        recs.append("🟢 Reversal: VAL tested and rejected, watch for bounce.")
-
-    if thin_zone:
-        recs.append("⚠️ Thin volume area → whippy zone, wait for confirmation.")
-
-    if abs(current["POC"] - current["VWAP"]) < 2:
-        recs.append("⚖️ POC ≈ VWAP → balanced zone, fade extremes.")
-
-    return recs
-
-def display_analysis(df, label="Daily"):
-    if len(df) >= 2:
-        df["Label"] = df["Date"].dt.strftime("%Y-%m-%d %H:%M:%S")
-        options = df["Label"].tolist()
-        selected = st.multiselect(f"Select two {label} candles", options, default=options[-2:])
-        if len(selected) == 2:
-            sel = df[df["Label"].isin(selected)].sort_values("Date")
-            today, prev = sel.iloc[1], sel.iloc[0]
-            bias_notes = interpret_bias(today, prev)
-            trade_recs = generate_trade_recommendations(today, prev)
-
-            st.markdown(f"### 🧭 {label} Bias Interpretation")
-            for n in bias_notes:
-                st.markdown(f"- {n}")
-
-            st.markdown(f"### 📌 {label} Trade Recommendations")
-            for r in trade_recs:
-                st.markdown(f"- {r}")
-
-            st.dataframe(sel[["Date", "Open", "Close", "POC", "VAL", "VAH", "VWAP", "Volume"]])
-        else:
-            st.info("Please select exactly 2.")
-
+# === DAILY SECTION ===
 if daily_file:
-    st.subheader("📅 Daily Bias & Trades")
-    daily_df = clean_df(load_file(daily_file))
-    display_analysis(daily_df, "Daily")
+    st.subheader("📅 Daily Bias Analysis")
+    df_daily = clean_df(pd.read_csv(daily_file))
 
-if h4_file:
-    st.subheader("🕓 4H Bias & Trades")
-    h4_df = clean_df(load_file(h4_file))
-    display_analysis(h4_df, "4H")
+    with st.expander("🔎 Analyze Daily Bias"):
+        available_dates = df_daily["Date"].dt.date.unique()
+        selected_date = st.date_input("Select Daily Candle Date", value=available_dates[-1], min_value=min(available_dates), max_value=max(available_dates))
+        daily_lookback = st.slider("Lookback candles (Daily)", min_value=2, max_value=10, value=3)
+
+        bias, reco = analyze_candle_bias(df_daily, selected_date, daily_lookback)
+        if bias:
+            st.markdown("### 🧠 Bias Explanation")
+            for b in bias:
+                st.write("- " + b)
+            st.markdown("### 🎯 Trade Recommendation")
+            for r in reco:
+                st.write("- " + r)
+        else:
+            st.warning("Not enough data before selected candle.")
+
+# === 4H SECTION ===
+if fourh_file:
+    st.subheader("⏱️ 4H Bias Analysis")
+    df_4h = clean_df(pd.read_csv(fourh_file))
+
+    with st.expander("🔎 Analyze 4H Bias"):
+        available_dates = df_4h["Date"].dt.date.unique()
+        selected_date = st.date_input("Select 4H Candle Date", value=available_dates[-1], key="4h_date", min_value=min(available_dates), max_value=max(available_dates))
+        fourh_lookback = st.slider("Lookback candles (4H)", min_value=2, max_value=12, value=4)
+
+        bias, reco = analyze_candle_bias(df_4h, selected_date, fourh_lookback)
+        if bias:
+            st.markdown("### 🧠 Bias Explanation")
+            for b in bias:
+                st.write("- " + b)
+            st.markdown("### 🎯 Trade Recommendation")
+            for r in reco:
+                st.write("- " + r)
+        else:
+            st.warning("Not enough data before selected candle.")
