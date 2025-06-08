@@ -48,7 +48,8 @@ if daily_file and h4_file and min30_file:
 
         # === Interactive date filter
         all_dates = df_d['Datetime'].dt.date.unique()
-    if len(all_dates) >= 3:
+    try:
+        if len(all_dates) >= 3:
         lookback_days = st.slider("Lookback Window (days)", min_value=1, max_value=30, value=5)
         start_date = st.date_input("Start date", value=all_dates[-3], min_value=min(all_dates), max_value=max(all_dates), key="session_date_input")
         session_day = pd.to_datetime(start_date).date()
