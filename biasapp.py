@@ -2,7 +2,6 @@
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
-import io
 
 st.set_page_config(layout="wide")
 st.title("Bias Mode Rule Engine + Session Planner")
@@ -19,7 +18,11 @@ daily_file = st.file_uploader("Upload Daily Bias file (CSV or TXT from Sierra Ch
 if tpo_file and h4_file and daily_file:
     try:
         def read_sierra_file(uploaded_file):
-            return pd.read_csv(uploaded_file)
+            df = pd.read_csv(uploaded_file)
+            # Fix Time column if needed
+            if 'Time' not in df.columns:
+                df['Time'] = '00:00:00'
+            return df
 
         tpo_df = read_sierra_file(tpo_file)
         h4_df = read_sierra_file(h4_file)
@@ -28,7 +31,7 @@ if tpo_file and h4_file and daily_file:
         # Format datetime columns
         tpo_df['Datetime'] = pd.to_datetime(tpo_df['Date'] + ' ' + tpo_df['Time'])
         h4_df['Datetime'] = pd.to_datetime(h4_df['Date'] + ' ' + h4_df['Time'])
-        daily_df['Datetime'] = pd.to_datetime(daily_df['Date'])
+        daily_df['Datetime'] = pd.to_datetime(daily_df['Date'] + ' ' + daily_df.get('Time', '00:00:00'))
 
         # Sort for merge_asof
         tpo_df = tpo_df.sort_values('Datetime')
