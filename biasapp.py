@@ -48,7 +48,7 @@ if daily_file and h4_file and min30_file:
 
         # === Interactive date filter
         all_dates = df_d['Datetime'].dt.date.unique()
-        if len(all_dates) >= 3:
+    if len(all_dates) >= 3:
         lookback_days = st.slider("Lookback Window (days)", min_value=1, max_value=30, value=5)
         start_date = st.date_input("Start date", value=all_dates[-3], min_value=min(all_dates), max_value=max(all_dates), key="session_date_input")
         session_day = pd.to_datetime(start_date).date()
@@ -58,7 +58,6 @@ if daily_file and h4_file and min30_file:
         df_m = df_m[df_m['Datetime'].dt.date == session_day]
 
         # === Daily Bias
-        latest_d = df_d.groupby('DateOnly').tail(1).sort_values('DateOnly').tail(3).reset_index(drop=True)
         poc_trend = latest_d['Point of Control_D'].is_monotonic_increasing
         vwaps = (latest_d['Volume Weighted Average Price_D'] > latest_d['Point of Control_D']).sum()
         above_vah = (latest_d['Last_D'] > latest_d['Value Area High Value_D']).sum()
@@ -71,7 +70,6 @@ if daily_file and h4_file and min30_file:
             daily_bias = "NEUTRAL"
 
         # === 4H Bias
-        recent_h = df_h.groupby('RoundedTime').tail(1).sort_values('RoundedTime').tail(6)
         h_vwap_poc = (recent_h['Volume Weighted Average Price_H'] > recent_h['Point of Control_H']).sum()
         h_above_vah = (recent_h['Last_H'] > recent_h['Value Area High Value_H']).sum()
         h_below_val = (recent_h['Last_H'] < recent_h['Value Area Low Value_H']).sum()
@@ -83,8 +81,6 @@ if daily_file and h4_file and min30_file:
             h4_bias = "4H Neutral"
 
         # === 30min Trend
-        delta_last = df_m_recent['Last_M'].iloc[-1] - df_m_recent['Last_M'].iloc[0]
-        delta_vwap = df_m_recent['Volume Weighted Average Price_M'].iloc[-1] - df_m_recent['Volume Weighted Average Price_M'].iloc[0]
         if delta_last > min_last_threshold and delta_vwap > min_vwap_threshold:
             min30_trend = "Short-term Upswing"
         elif delta_last < -min_last_threshold and delta_vwap < -min_vwap_threshold:
