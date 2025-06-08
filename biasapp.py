@@ -3,8 +3,8 @@ from datetime import datetime
 import pandas as pd
 import streamlit as st
 
-st.set_page_config(page_title="Bias Dashboard – Enhanced", layout="wide")
-st.title("📊 Enhanced Bias Dashboard – Daily & 4H Pattern Analysis")
+st.set_page_config(page_title="Bias Dashboard – Interpretive Mode", layout="wide")
+st.title("📊 Bias Dashboard – Interpretation, Levels & Market Behavior")
 
 # === SIDEBAR UPLOAD ===
 st.sidebar.header("📂 Upload CSV Files")
@@ -32,92 +32,77 @@ def clean_df(df):
         df[col] = pd.to_numeric(df[col], errors='coerce')
     return df.dropna().sort_values("Date").reset_index(drop=True)
 
-# === ANALYSIS FUNCTION ===
-def analyze_candle_bias(df, date_selected, lookback):
-    if df.empty or date_selected not in df["Date"].dt.date.values:
-        return None, None
+# === INTERPRETATION FUNCTION ===
+def interpret_bias(curr, window):
+    va_range = curr["VAH"] - curr["VAL"]
+    center = curr["VAL"] + va_range / 2
+    summary = []
+    reco = []
 
-    idx = df[df["Date"].dt.date == date_selected].index[0]
+    # Interpretation logic
+    if abs(curr["POC"] - center) < va_range * 0.1:
+        summary.append("POC near center → balanced")
+    if curr["POC"] < window["POC"].mean():
+        summary.append("POC falling → bearish migration")
+    if "VWAP" in curr and abs(curr["VWAP"] - curr["POC"]) < va_range * 0.1:
+        summary.append("VWAP ≈ POC → fair value consensus")
+    if curr["Close"] < curr["VAL"] and curr["Close"] > curr["Open"]:
+        summary.append("Failed breakdown (below VAL rejected)")
+
+    # Trade recommendations
+    if curr["Close"] > curr["VAL"] and abs(curr["Close"] - curr["VAL"]) < va_range * 0.1:
+        reco.append("🟢 Reversal: VAL tested and rejected, watch for bounce.")
+    if "VWAP" in curr and abs(curr["POC"] - curr["VWAP"]) < va_range * 0.1:
+        reco.append("📯 POC ≈ VWAP → balanced zone, fade extremes.")
+
+    return summary, reco
+
+# === DISPLAY SECTION ===
+def display_analysis(df, tf_label):
+    st.subheader(f"🔎 {tf_label} Bias Interpretation")
+
+    dates = df["Date"].dt.date.unique()
+    selected_date = st.date_input(f"Select {tf_label} Candle", value=dates[-1], key=f"{tf_label}_date", min_value=min(dates), max_value=max(dates))
+    lookback = st.slider(f"Lookback candles ({tf_label})", min_value=2, max_value=10, value=3, key=f"{tf_label}_slider")
+
+    if selected_date not in df["Date"].dt.date.values:
+        st.warning("Selected date not found in data.")
+        return
+
+    idx = df[df["Date"].dt.date == selected_date].index[0]
     if idx < lookback:
-        return None, None
+        st.warning("Not enough data before selected date.")
+        return
 
-    window = df.iloc[idx - lookback:idx]
     curr = df.iloc[idx]
+    window = df.iloc[idx - lookback:idx]
 
-    bias_explanation = []
-    trade_reco = []
+    summary, reco = interpret_bias(curr, window)
 
-    # POC Trend
-    poc_trend = "POC is rising" if curr["POC"] > window["POC"].mean() else "POC is falling"
-    bias_explanation.append(poc_trend)
-    if "rising" in poc_trend:
-        trade_reco.append("Look for long continuation")
-    else:
-        trade_reco.append("Look for short opportunities")
+    st.markdown("### 🧠 Bias Interpretation")
+    for item in summary:
+        st.write("- " + item)
 
-    # Value Area Compression
-    va_now = curr["VAH"] - curr["VAL"]
-    va_avg = (window["VAH"] - window["VAL"]).mean()
-    if va_now < va_avg * 0.7:
-        bias_explanation.append("Value area is compressed")
-        trade_reco.append("Watch for breakout from range")
+    st.markdown("### 🎯 Trade Recommendation")
+    for item in reco:
+        st.write("- " + item)
 
-    # Close vs VAL/VAH
-    if abs(curr["Close"] - curr["VAL"]) < va_now * 0.2:
-        bias_explanation.append("Close near VAL")
-        trade_reco.append("Possible long from lower range")
-    if abs(curr["Close"] - curr["VAH"]) < va_now * 0.2:
-        bias_explanation.append("Close near VAH")
-        trade_reco.append("Consider short near upper range")
+    st.markdown("### 🧭 Key Price Levels")
+    st.code(f"VAL: {curr['VAL']:.2f} | POC: {curr['POC']:.2f} | VAH: {curr['VAH']:.2f} | Close: {curr['Close']:.2f}")
 
-    # Candle Bias
-    if curr["Close"] > curr["Open"]:
-        bias_explanation.append("Candle closed bullish")
-    elif curr["Close"] < curr["Open"]:
-        bias_explanation.append("Candle closed bearish")
+    st.markdown("### 📌 What to Watch For")
+    st.markdown("""
+    - **Volume spikes** at VAL/VAH → strong rejection or breakout.
+    - **Fast push through levels** → likely stop runs or directional conviction.
+    - **Long dwell time at VAL/VAH** → indecision, wait for follow-through.
+    - **Fade the extremes** if POC ≈ VWAP and no expansion.
+    """)
 
-    return bias_explanation, trade_reco
-
-# === DAILY SECTION ===
+# === MAIN SECTIONS ===
 if daily_file:
-    st.subheader("📅 Daily Bias Analysis")
     df_daily = clean_df(pd.read_csv(daily_file))
+    display_analysis(df_daily, "Daily")
 
-    with st.expander("🔎 Analyze Daily Bias"):
-        available_dates = df_daily["Date"].dt.date.unique()
-        selected_date = st.date_input("Select Daily Candle Date", value=available_dates[-1], min_value=min(available_dates), max_value=max(available_dates))
-        daily_lookback = st.slider("Lookback candles (Daily)", min_value=2, max_value=10, value=3)
-
-        st.info(f"📌 Selected Daily Date: {selected_date}, Lookback: {daily_lookback}")
-        bias, reco = analyze_candle_bias(df_daily, selected_date, daily_lookback)
-        if bias:
-            st.markdown("### 🧠 Bias Explanation")
-            for b in bias:
-                st.write("- " + b)
-            st.markdown("### 🎯 Trade Recommendation")
-            for r in reco:
-                st.write("- " + r)
-        else:
-            st.warning("Not enough data before selected candle.")
-
-# === 4H SECTION ===
 if fourh_file:
-    st.subheader("⏱️ 4H Bias Analysis")
     df_4h = clean_df(pd.read_csv(fourh_file))
-
-    with st.expander("🔎 Analyze 4H Bias"):
-        available_dates = df_4h["Date"].dt.date.unique()
-        selected_date = st.date_input("Select 4H Candle Date", value=available_dates[-1], key="4h_date", min_value=min(available_dates), max_value=max(available_dates))
-        fourh_lookback = st.slider("Lookback candles (4H)", min_value=2, max_value=12, value=4)
-
-        st.info(f"📌 Selected 4H Date: {selected_date}, Lookback: {fourh_lookback}")
-        bias, reco = analyze_candle_bias(df_4h, selected_date, fourh_lookback)
-        if bias:
-            st.markdown("### 🧠 Bias Explanation")
-            for b in bias:
-                st.write("- " + b)
-            st.markdown("### 🎯 Trade Recommendation")
-            for r in reco:
-                st.write("- " + r)
-        else:
-            st.warning("Not enough data before selected candle.")
+    display_analysis(df_4h, "4H")
