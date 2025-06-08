@@ -32,25 +32,22 @@ if daily_file and h4_file and tpo_file:
                 if src in df.columns:
                     df.rename(columns={src: dst}, inplace=True)
             df['Datetime'] = pd.to_datetime(df['Date'] + ' ' + df['Time'])
-            df = df.sort_values('Datetime')
+            df = df.sort_values('Datetime').drop_duplicates(subset='Datetime', keep='last')
+            st.write(f"✅ Loaded {label}:", len(df), "rows after dropping duplicates")
             return df
 
         daily = read_and_prepare(daily_file, "Daily")
         h4 = read_and_prepare(h4_file, "4H")
         tpo = read_and_prepare(tpo_file, "30min")
 
-        
-tpo_cols = set(tpo.columns)
-h4 = h4[[col for col in h4.columns if col not in tpo_cols or col == 'Datetime']]
-merged = pd.merge_asof(tpo, h4, on='Datetime', direction='backward', suffixes=('', '_4H'))
-st.write('🧪 After 4H Merge – Datetime sample:', merged['Datetime'].tail())
+        # Avoid column collisions before merge
+        tpo_cols = set(tpo.columns)
+        h4 = h4[[col for col in h4.columns if col not in tpo_cols or col == 'Datetime']]
+        merged = pd.merge_asof(tpo, h4, on='Datetime', direction='backward', suffixes=('', '_4H'))
 
-        
-merged_cols = set(merged.columns)
-daily = daily[[col for col in daily.columns if col not in merged_cols or col == 'Datetime']]
-merged = pd.merge_asof(merged, daily, on='Datetime', direction='backward', suffixes=('', '_Daily'))
-st.write('🧪 After Daily Merge – Datetime sample:', merged['Datetime'].tail())
-
+        merged_cols = set(merged.columns)
+        daily = daily[[col for col in daily.columns if col not in merged_cols or col == 'Datetime']]
+        merged = pd.merge_asof(merged, daily, on='Datetime', direction='backward', suffixes=('', '_Daily'))
 
         st.subheader("🧠 Daily Bias Interpretation")
         most_recent = merged.iloc[-1]
@@ -107,6 +104,5 @@ st.write('🧪 After Daily Merge – Datetime sample:', merged['Datetime'].tail(
 
     except Exception as e:
         st.error(f"An error occurred: {e}")
-
 else:
     st.info("Upload all 3 files (Daily, 4H, 30min) to begin.")
