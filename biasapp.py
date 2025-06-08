@@ -3,95 +3,133 @@ import streamlit as st
 import pandas as pd
 
 st.set_page_config(layout="wide")
-st.title("📊 Bias Assistant with Rule-Based Interpretation")
+st.title("📊 Multi-Timeframe Bias Assistant – Daily & 4H Trend Scanner")
 
 st.markdown("""
-This app combines Sierra Chart Daily, 4H, and 30min data and applies rule-based logic for:
-- VWAP vs POC positioning
-- Price inside vs outside Value Area (VAH/VAL)
-- Volume surge detection
-- Final bias classification with explanation
+This tool compares the current day vs the past 2–3 days (and 4H candles) to detect directional memory and build a bias narrative.
+
+It uses:
+- POC trend
+- VWAP vs POC
+- Price vs VAH/VAL
+- Volume momentum
+- Combined bias scoring
 """)
 
-# Upload section
 daily_file = st.file_uploader("📅 Upload Daily CSV", type=["csv"])
 h4_file = st.file_uploader("🕓 Upload 4H CSV", type=["csv"])
-tpo_file = st.file_uploader("🕧 Upload 30min CSV", type=["csv"])
 
-def prepare_df(upload, suffix):
-    df = pd.read_csv(upload)
+def clean(df, suffix):
     df.columns = [c.strip() for c in df.columns]
-
     df['Date'] = df['Date'].astype(str)
     df['Time'] = df['Time'].astype(str) if 'Time' in df.columns else '00:00:00'
     df['Datetime'] = pd.to_datetime(df['Date'] + ' ' + df['Time'], errors='coerce')
-
     df = df.sort_values("Datetime").drop_duplicates(subset="Datetime")
-
     keep = ['Datetime', 'Last', 'Volume', 'Point of Control', 'Value Area High Value', 'Value Area Low Value', 'Volume Weighted Average Price']
-    df = df[[col for col in keep if col in df.columns]]
-    df.rename(columns={col: f"{col}_{suffix}" for col in df.columns if col != 'Datetime'}, inplace=True)
+    df = df[[c for c in keep if c in df.columns]]
+    df.rename(columns={c: f"{c}_{suffix}" for c in df.columns if c != 'Datetime'}, inplace=True)
     df = df.loc[:, ~df.columns.duplicated()]
     return df
 
-def classify_bias(row):
+def daily_bias_score(df):
+    df = df.copy()
+    df['DateOnly'] = df['Datetime'].dt.date
+    latest_3 = df.groupby('DateOnly').tail(1).sort_values('DateOnly').tail(3).reset_index(drop=True)
+
+    output = []
+    for i, row in latest_3.iterrows():
+        try:
+            poc = row['Point of Control_D']
+            vwap = row['Volume Weighted Average Price_D']
+            vah = row['Value Area High Value_D']
+            val = row['Value Area Low Value_D']
+            close = row['Last_D']
+            volume = row['Volume_D']
+
+            entry = {
+                "Date": row['DateOnly'],
+                "POC": poc,
+                "VWAP": vwap,
+                "Close": close,
+                "Volume": volume,
+                "VWAP > POC": vwap > poc,
+                "Close > VAH": close > vah,
+                "Close < VAL": close < val
+            }
+            output.append(entry)
+        except:
+            continue
+
+    score_df = pd.DataFrame(output)
+    st.subheader("📆 3-Day Daily Bias Comparison")
+    st.dataframe(score_df)
+
+    rising_poc = score_df['POC'].is_monotonic_increasing
+    bullish_vwap = score_df['VWAP > POC'].sum()
+    closes_above_vah = score_df['Close > VAH'].sum()
+    closes_below_val = score_df['Close < VAL'].sum()
+
+    st.markdown("### 📊 Bias Interpretation Summary")
+    st.markdown(f"- POC trend: {'⬆️ Rising' if rising_poc else '↕️ Mixed or falling'}")
+    st.markdown(f"- VWAP > POC Days: `{bullish_vwap}` of 3")
+    st.markdown(f"- Closes above VAH: `{closes_above_vah}` | below VAL: `{closes_below_val}`")
+
+    if rising_poc and bullish_vwap >= 2 and closes_above_vah >= 2:
+        st.success("📈 Overall Sentiment: **STRONG BULLISH**")
+    elif closes_below_val >= 2 and not rising_poc:
+        st.error("📉 Overall Sentiment: **STRONG BEARISH**")
+    else:
+        st.warning("🟡 Overall Sentiment: **NEUTRAL or MIXED**")
+
+def h4_trend_score(df):
+    df = df.copy()
+    df['RoundedTime'] = df['Datetime'].dt.floor('4H')
+    recent = df.groupby('RoundedTime').tail(1).sort_values('RoundedTime').tail(6)
+
+    st.subheader("🕓 Recent 4H Bias Snapshots (Last 6 x 4H)")
+    trend_rows = []
+    for i, row in recent.iterrows():
+        try:
+            vwap = row['Volume Weighted Average Price_H']
+            poc = row['Point of Control_H']
+            price = row['Last_H']
+            val = row['Value Area Low Value_H']
+            vah = row['Value Area High Value_H']
+
+            label = "Inside Value"
+            if price > vah:
+                label = "Above VAH"
+            elif price < val:
+                label = "Below VAL"
+
+            trend_rows.append({
+                "Time": row['RoundedTime'],
+                "POC": poc,
+                "VWAP": vwap,
+                "Close": price,
+                "VWAP > POC": vwap > poc,
+                "Location": label
+            })
+        except:
+            continue
+
+    trend_df = pd.DataFrame(trend_rows)
+    st.dataframe(trend_df)
+
+    if trend_df['VWAP > POC'].sum() >= 4 and (trend_df['Location'] == "Above VAH").sum() >= 2:
+        st.success("📈 Intraday Momentum: **4H Bullish Bias**")
+    elif (trend_df['Location'] == "Below VAL").sum() >= 2:
+        st.error("📉 Intraday Momentum: **4H Bearish Bias**")
+    else:
+        st.info("🟡 Intraday Momentum: **4H Mixed or Range**")
+
+if daily_file and h4_file:
     try:
-        price = row['Last_M']
-        val = row['Value Area Low Value_M']
-        vah = row['Value Area High Value_M']
-        poc = row['Point of Control_M']
-        vwap = row['Volume Weighted Average Price_M']
-        volume = row['Volume_M']
-
-        # Volume context
-        vol_surge = volume > 10000
-
-        # Value area location
-        if price > vah:
-            loc = 'Above VAH'
-        elif price < val:
-            loc = 'Below VAL'
-        else:
-            loc = 'Inside VA'
-
-        # VWAP vs POC
-        if vwap > poc:
-            consensus = 'bullish'
-        elif vwap < poc:
-            consensus = 'bearish'
-        else:
-            consensus = 'neutral'
-
-        # Combine logic
-        if loc == 'Above VAH' and consensus == 'bullish' and vol_surge:
-            return '📈 Initiative Long Bias'
-        elif loc == 'Below VAL' and consensus == 'bearish' and vol_surge:
-            return '📉 Initiative Short Bias'
-        elif loc == 'Inside VA' and vol_surge:
-            return '🔄 Responsive Trading Zone'
-        elif not vol_surge:
-            return '⏳ Low Volume – Wait'
-        else:
-            return '❓ Unclear'
-    except:
-        return '⚠️ Incomplete Data'
-
-if daily_file and h4_file and tpo_file:
-    try:
-        daily = prepare_df(daily_file, "D")
-        h4 = prepare_df(h4_file, "H")
-        tpo = prepare_df(tpo_file, "M")
-
-        merged = pd.merge_asof(tpo, h4, on="Datetime", direction="backward")
-        merged = pd.merge_asof(merged, daily, on="Datetime", direction="backward")
-        merged = merged.loc[:, ~merged.columns.duplicated()]
-
-        merged['Bias Signal'] = merged.apply(classify_bias, axis=1)
-
-        st.success("✅ Rule-based classification applied.")
-        st.dataframe(merged[['Datetime', 'Last_M', 'Bias Signal']].tail(50))
-
+        df_d = clean(daily_file, "D")
+        df_h4 = clean(h4_file, "H")
+        daily_bias_score(df_d)
+        h4_trend_score(df_h4)
     except Exception as e:
-        st.error(f"❌ Merge or classification failed: {e}")
+        st.error(f"Processing error: {e}")
 else:
-    st.info("Upload all 3 CSV files to run the bias engine.")
+    st.info("Please upload both Daily and 4H CSV files to begin.")
