@@ -2,16 +2,15 @@
 from datetime import datetime
 import pandas as pd
 import streamlit as st
-import matplotlib.pyplot as plt
 
-st.set_page_config(page_title="Bias Dashboard – Interpretive Mode", layout="wide")
-st.title("📊 Bias Dashboard – Bias Force, Visualization, Key Levels & Interpretation")
+st.set_page_config(page_title="Bias Dashboard – Enhanced Ruleset", layout="wide")
+st.title("📊 Bias Dashboard – Structure + Volume & Time-Based Signals")
 
 # === FILE UPLOAD ===
-st.sidebar.header("📂 Upload CSV Files")
-daily_file = st.sidebar.file_uploader("Upload Daily CSV", type=["csv", "txt"])
+st.sidebar.header("📂 Upload Daily CSV File")
+uploaded_file = st.sidebar.file_uploader("Upload CSV", type=["csv", "txt"])
 
-# === CLEAN FUNCTION ===
+# === DATA CLEANING ===
 def clean_df(df):
     df.columns = df.columns.str.strip()
     col_map = {
@@ -19,10 +18,11 @@ def clean_df(df):
         'Point of Control': 'POC',
         'Value Area Low Value': 'VAL',
         'Value Area High Value': 'VAH',
-        'Volume Weighted Average Price': 'VWAP'
+        'Volume Weighted Average Price': 'VWAP',
+        '# of Trades': 'Trades'
     }
     df = df.rename(columns=col_map)
-    required = ['Date', 'Open', 'Close', 'POC', 'VAL', 'VAH', 'VWAP']
+    required = ['Date', 'Open', 'Close', 'POC', 'VAL', 'VAH', 'VWAP', 'Volume', 'Trades']
     missing = [col for col in required if col not in df.columns]
     if missing:
         st.error(f"Missing columns: {', '.join(missing)}")
@@ -32,74 +32,70 @@ def clean_df(df):
         df[col] = pd.to_numeric(df[col], errors='coerce')
     return df.dropna().sort_values("Date").reset_index(drop=True)
 
-# === BIAS SCORING ===
-def score_bias(row):
-    range_va = row["VAH"] - row["VAL"]
-    vwap_dist = abs(row["VWAP"] - row["POC"])
-    center_dist = abs(row["POC"] - (row["VAL"] + range_va / 2))
-    score = 0
-    if center_dist < range_va * 0.15:
-        score += 1
-    if vwap_dist < range_va * 0.1:
-        score += 1
-    if abs(row["Close"] - row["VAL"]) < range_va * 0.15:
-        score += 1
-    if abs(row["Close"] - row["VAH"]) < range_va * 0.15:
-        score += 1
-    if row["Close"] < row["VAL"]:
-        score += 1
-    if row["Close"] > row["VAH"]:
-        score += 1
-    return score
+# === INTERPRETATION LOGIC ===
+def interpret_bias(curr, window):
+    va_range = curr["VAH"] - curr["VAL"]
+    center = curr["VAL"] + va_range / 2
+    bias = []
+    reco = []
 
-# === VISUALIZATION ===
-def show_plot(data):
-    fig, ax = plt.subplots(figsize=(10, 5))
-    ax.plot(data["Date"], data["POC"], label="POC", linewidth=2)
-    ax.plot(data["Date"], data["VAL"], label="VAL", linestyle="--")
-    ax.plot(data["Date"], data["VAH"], label="VAH", linestyle="--")
-    ax.plot(data["Date"], data["Close"], label="Close", color="black")
-    ax.plot(data["Date"], data["VWAP"], label="VWAP", linestyle="dotted")
-    colors = ['green' if s >= 4 else 'orange' if s == 3 else 'red' for s in data["BiasStrength"]]
-    for i, row in data.iterrows():
-        ax.axvline(x=row["Date"], color=colors[i], alpha=0.3, linewidth=5)
-    ax.legend()
-    ax.set_title("Bias Zone Visualization with Strength")
-    ax.set_ylabel("Price")
-    ax.grid(True)
-    st.pyplot(fig)
+    # Structural analysis
+    if abs(curr["POC"] - center) < va_range * 0.1:
+        bias.append("POC near center → balanced")
+    if curr["POC"] < window["POC"].mean():
+        bias.append("POC falling → bearish migration")
+    if abs(curr["VWAP"] - curr["POC"]) < va_range * 0.1:
+        bias.append("VWAP ≈ POC → fair value consensus")
+    if curr["Close"] < curr["VAL"] and curr["Close"] > curr["Open"]:
+        bias.append("Failed breakdown (below VAL rejected)")
+    if curr["Close"] > curr["VAL"] and abs(curr["Close"] - curr["VAL"]) < va_range * 0.2:
+        reco.append("🟢 Reversal: VAL tested and rejected")
+    if abs(curr["VWAP"] - curr["POC"]) < va_range * 0.1:
+        reco.append("📯 POC ≈ VWAP → fade extremes")
 
-# === INTERPRETATION PANEL ===
-def interpret_force(score):
-    if score >= 4:
-        return "🟢 Strong directional bias. Watch for commitment or breakout follow-through."
-    elif score == 3:
-        return "🟠 Moderate setup. Potential but requires confirmation."
-    else:
-        return "🔴 Weak/neutral. Wait for clearer structure or reaction."
+    # Volume and trade count logic
+    avg_vol = window["Volume"].mean()
+    if curr["Volume"] > 1.3 * avg_vol:
+        bias.append("High volume day → expansion or strong interest")
+        if abs(curr["Close"] - curr["Open"]) < va_range * 0.2:
+            bias.append("Volume spike but small body → absorption")
+            reco.append("Fade reaction unless confirmed")
 
-# === MAIN LOGIC ===
-if daily_file:
-    df = clean_df(pd.read_csv(daily_file))
+    avg_trades = window["Trades"].mean()
+    if curr["Trades"] < 0.8 * avg_trades and abs(curr["Close"] - curr["Open"]) > va_range * 0.5:
+        bias.append("Large range but low trade count → inefficient move")
+        reco.append("Caution: may reverse if no follow-through")
+
+    if curr["Volume"] < 0.7 * avg_vol and va_range < (window["VAH"] - window["VAL"]).mean() * 0.7:
+        bias.append("Low volume + narrow VA → coiling")
+        reco.append("Watch for breakout or trap behavior")
+
+    return bias, reco
+
+# === MAIN DISPLAY ===
+if uploaded_file:
+    df = clean_df(pd.read_csv(uploaded_file))
     if not df.empty:
-        df["BiasStrength"] = df.apply(score_bias, axis=1)
-        recent = df.tail(10).reset_index(drop=True)
-        st.subheader("🔍 Recent Daily Bias Strength Summary")
-        st.dataframe(recent[["Date", "Close", "POC", "VAL", "VAH", "VWAP", "BiasStrength"]])
-        show_plot(recent)
+        dates = df["Date"].dt.date.unique()
+        selected_date = st.date_input("Select Candle Date", value=dates[-1], min_value=min(dates), max_value=max(dates))
+        lookback = st.slider("Lookback candles", 3, 10, 5)
 
-        st.subheader("🧠 Market Interpretation and Guidance")
-        latest = recent.iloc[-1]
-        force = interpret_force(latest["BiasStrength"])
-        st.markdown(f"**Bias Score:** `{latest['BiasStrength']}` → {force}")
-        st.markdown("### 📌 Key Price Levels")
-        st.code(f"VAL: {latest['VAL']:.2f} | POC: {latest['POC']:.2f} | VAH: {latest['VAH']:.2f} | VWAP: {latest['VWAP']:.2f} | Close: {latest['Close']:.2f}")
+        if selected_date not in df["Date"].dt.date.values:
+            st.warning("Date not in dataset.")
+        else:
+            idx = df[df["Date"].dt.date == selected_date].index[0]
+            if idx < lookback:
+                st.warning("Not enough lookback candles.")
+            else:
+                window = df.iloc[idx - lookback:idx]
+                curr = df.iloc[idx]
+                bias, reco = interpret_bias(curr, window)
 
-        st.markdown("### 🔭 What to Watch For")
-        st.markdown("""
-- **Volume spikes** at VAL/VAH → strong rejection or breakout.
-- **Fast push through levels** → directional conviction or stop runs.
-- **Long dwell time** at VAL/VAH → market in balance, indecision.
-- **Fade extremes** when POC ≈ VWAP with no expansion.
-- **Bias force >= 4** → trade with momentum.
-""")
+                st.markdown("### 🧠 Bias Interpretation")
+                for b in bias:
+                    st.write("- " + b)
+                st.markdown("### 🎯 Trade Recommendation")
+                for r in reco:
+                    st.write("- " + r)
+                st.markdown("### 📌 Key Price Levels")
+                st.code(f"VAL: {curr['VAL']:.2f} | POC: {curr['POC']:.2f} | VAH: {curr['VAH']:.2f} | VWAP: {curr['VWAP']:.2f} | Close: {curr['Close']:.2f} | Volume: {curr['Volume']:.0f} | Trades: {curr['Trades']:.0f}")
