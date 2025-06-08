@@ -23,30 +23,54 @@ if tpo_file and h4_file and daily_file:
                 df['Time'] = '00:00:00'
             return df
 
-        def normalize_column_names(df, label="Unknown"):
-            # Try to rename common 'Last' variants
+        def normalize_columns(df, label):
+            # Rename Last column
             last_variants = ['Last', 'Close', 'Last Price', 'LastPrice']
-            found = False
             for col in df.columns:
                 if col.strip() in last_variants:
                     df.rename(columns={col: 'Last'}, inplace=True)
-                    found = True
                     break
-            # If still missing, use the first float column that isn’t Date/Time
             if 'Last' not in df.columns:
                 for col in df.columns:
                     if col not in ['Date', 'Time'] and pd.api.types.is_numeric_dtype(df[col]):
                         df.rename(columns={col: 'Last'}, inplace=True)
-                        found = True
                         break
-            if not found:
-                raise ValueError(f"Missing required column 'Last' in {label} data.")
+            if 'Last' not in df.columns:
+                raise ValueError(f"Missing 'Last' price in {label} data.")
+
+            # Rename Value Area High
+            vah_variants = ['Value Area High Value', 'Value Area High', 'VAH', 'VA High']
+            for col in df.columns:
+                if col.strip() in vah_variants:
+                    df.rename(columns={col: 'Value Area High Value'}, inplace=True)
+                    break
+            if 'Value Area High Value' not in df.columns:
+                raise ValueError(f"Missing 'Value Area High' in {label} data.")
+
+            # Rename Value Area Low
+            val_variants = ['Value Area Low Value', 'Value Area Low', 'VAL', 'VA Low']
+            for col in df.columns:
+                if col.strip() in val_variants:
+                    df.rename(columns={col: 'Value Area Low Value'}, inplace=True)
+                    break
+            if 'Value Area Low Value' not in df.columns:
+                raise ValueError(f"Missing 'Value Area Low' in {label} data.")
+
+            # Rename Point of Control
+            poc_variants = ['Point of Control', 'POC']
+            for col in df.columns:
+                if col.strip() in poc_variants:
+                    df.rename(columns={col: 'Point of Control'}, inplace=True)
+                    break
+            if 'Point of Control' not in df.columns:
+                raise ValueError(f"Missing 'Point of Control' in {label} data.")
+
             return df
 
         # Read and normalize
-        tpo_df = normalize_column_names(read_sierra_file(tpo_file), label="TPO")
-        h4_df = normalize_column_names(read_sierra_file(h4_file), label="4H")
-        daily_df = normalize_column_names(read_sierra_file(daily_file), label="Daily")
+        tpo_df = normalize_columns(read_sierra_file(tpo_file), "TPO")
+        h4_df = normalize_columns(read_sierra_file(h4_file), "4H")
+        daily_df = normalize_columns(read_sierra_file(daily_file), "Daily")
 
         # Build datetime
         tpo_df['Datetime'] = pd.to_datetime(tpo_df['Date'] + ' ' + tpo_df['Time'])
