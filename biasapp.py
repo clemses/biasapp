@@ -1,162 +1,102 @@
 
 import streamlit as st
 import pandas as pd
-import matplotlib.pyplot as plt
 
 st.set_page_config(layout="wide")
-st.title("Bias Mode Rule Engine + Session Planner")
+st.title("📊 Multi-Timeframe Bias Assistant – Sierra Chart (.txt) Files")
 
 st.markdown("""
-This tool classifies market bias mode (Initiative vs Responsive) based on 30min TPO data, 4H and Daily chart structure, and generates a full session planner with visual signals and export functionality.
+This app analyzes Sierra Chart data from Daily, 4H, and 30min charts (.csv or .txt), and gives written interpretations and directional bias across timeframes.
 """)
 
-# --- Upload section ---
-tpo_file = st.file_uploader("Upload 30min TPO file (CSV or TXT from Sierra Chart)", type=["csv", "txt"])
-h4_file = st.file_uploader("Upload 4H Bias file (CSV or TXT from Sierra Chart)", type=["csv", "txt"])
-daily_file = st.file_uploader("Upload Daily Bias file (CSV or TXT from Sierra Chart)", type=["csv", "txt"])
+# --- File Uploads ---
+daily_file = st.file_uploader("📅 Upload Daily File", type=["csv", "txt"])
+h4_file = st.file_uploader("🕓 Upload 4H File", type=["csv", "txt"])
+tpo_file = st.file_uploader("🕧 Upload 30min File", type=["csv", "txt"])
 
-if tpo_file and h4_file and daily_file:
+if daily_file and h4_file and tpo_file:
     try:
-        def read_sierra_file(uploaded_file):
-            df = pd.read_csv(uploaded_file)
+        def read_and_prepare(file, label):
+            df = pd.read_csv(file)
             if 'Time' not in df.columns:
                 df['Time'] = '00:00:00'
+            df.columns = [c.strip() for c in df.columns]
+            rename_map = {
+                'Close': 'Last', 'Last Price': 'Last', 'Last': 'Last',
+                'Point of Control': 'POC', 'POC': 'POC',
+                'Value Area High Value': 'VAH', 'Value Area High': 'VAH', 'VAH': 'VAH',
+                'Value Area Low Value': 'VAL', 'Value Area Low': 'VAL', 'VAL': 'VAL',
+                'Volume Weighted Average Price': 'VWAP', 'VWAP': 'VWAP'
+            }
+            for src, dst in rename_map.items():
+                if src in df.columns:
+                    df.rename(columns={src: dst}, inplace=True)
+            df['Datetime'] = pd.to_datetime(df['Date'] + ' ' + df['Time'])
+            df = df.sort_values('Datetime')
             return df
 
-        def normalize_columns(df, label):
-            # Rename Last column
-            last_variants = ['Last', 'Close', 'Last Price', 'LastPrice']
-            for col in df.columns:
-                if col.strip() in last_variants:
-                    df.rename(columns={col: 'Last'}, inplace=True)
-                    break
-            if 'Last' not in df.columns:
-                for col in df.columns:
-                    if col not in ['Date', 'Time'] and pd.api.types.is_numeric_dtype(df[col]):
-                        df.rename(columns={col: 'Last'}, inplace=True)
-                        break
-            if 'Last' not in df.columns:
-                raise ValueError(f"Missing 'Last' price in {label} data.")
+        daily = read_and_prepare(daily_file, "Daily")
+        h4 = read_and_prepare(h4_file, "4H")
+        tpo = read_and_prepare(tpo_file, "30min")
 
-            # Rename Value Area High
-            vah_variants = ['Value Area High Value', 'Value Area High', 'VAH', 'VA High']
-            for col in df.columns:
-                if col.strip() in vah_variants:
-                    df.rename(columns={col: 'Value Area High Value'}, inplace=True)
-                    break
-            if 'Value Area High Value' not in df.columns:
-                raise ValueError(f"Missing 'Value Area High' in {label} data.")
+        merged = pd.merge_asof(tpo, h4, on='Datetime', direction='backward', suffixes=('', '_4H'))
+        merged = pd.merge_asof(merged, daily, on='Datetime', direction='backward', suffixes=('', '_Daily'))
 
-            # Rename Value Area Low
-            val_variants = ['Value Area Low Value', 'Value Area Low', 'VAL', 'VA Low']
-            for col in df.columns:
-                if col.strip() in val_variants:
-                    df.rename(columns={col: 'Value Area Low Value'}, inplace=True)
-                    break
-            if 'Value Area Low Value' not in df.columns:
-                raise ValueError(f"Missing 'Value Area Low' in {label} data.")
+        st.subheader("🧠 Daily Bias Interpretation")
+        most_recent = merged.iloc[-1]
 
-            # Rename Point of Control
-            poc_variants = ['Point of Control', 'POC']
-            for col in df.columns:
-                if col.strip() in poc_variants:
-                    df.rename(columns={col: 'Point of Control'}, inplace=True)
-                    break
-            if 'Point of Control' not in df.columns:
-                raise ValueError(f"Missing 'Point of Control' in {label} data.")
+        interpretations = []
 
-            return df
+        if most_recent['POC_Daily'] > most_recent['VAL_Daily'] and most_recent['POC_Daily'] < most_recent['VAH_Daily']:
+            interpretations.append("🔹 POC in center of VA → Balanced")
+        elif most_recent['POC_Daily'] >= most_recent['VAH_Daily']:
+            interpretations.append("🔺 POC near VAH → Bullish tilt")
+        elif most_recent['POC_Daily'] <= most_recent['VAL_Daily']:
+            interpretations.append("🔻 POC near VAL → Bearish tilt")
 
-        # Read and normalize
-        tpo_df = normalize_columns(read_sierra_file(tpo_file), "TPO")
-        h4_df = normalize_columns(read_sierra_file(h4_file), "4H")
-        daily_df = normalize_columns(read_sierra_file(daily_file), "Daily")
+        if most_recent['VWAP_Daily'] > most_recent['POC_Daily']:
+            interpretations.append("✅ VWAP > POC → Fair value consensus above auction")
+        elif most_recent['VWAP_Daily'] < most_recent['POC_Daily']:
+            interpretations.append("⚠️ VWAP < POC → Value perceived lower")
 
-        # Build datetime
-        tpo_df['Datetime'] = pd.to_datetime(tpo_df['Date'] + ' ' + tpo_df['Time'])
-        h4_df['Datetime'] = pd.to_datetime(h4_df['Date'] + ' ' + h4_df['Time'])
-        daily_df['Datetime'] = pd.to_datetime(daily_df['Date'] + ' ' + daily_df['Time'])
+        if most_recent['Last_Daily'] > most_recent['VAH_Daily']:
+            interpretations.append("📈 Close above VAH → Initiative Buy Bias")
+        elif most_recent['Last_Daily'] < most_recent['VAL_Daily']:
+            interpretations.append("📉 Close below VAL → Initiative Sell Bias")
+        else:
+            interpretations.append("⏸️ Close inside VA → Responsive or Balanced Bias")
 
-        # Sort for merging
-        tpo_df = tpo_df.sort_values('Datetime')
-        h4_df = h4_df.sort_values('Datetime')
-        daily_df = daily_df.sort_values('Datetime')
+        st.write("**Combined Daily Analysis:**")
+        for item in interpretations:
+            st.markdown("- " + item)
 
-        # Merge all
-        merged = pd.merge_asof(tpo_df, h4_df, on='Datetime', direction='backward', suffixes=('', '_4H'))
-        merged = pd.merge_asof(merged, daily_df, on='Datetime', direction='backward', suffixes=('', '_Daily'))
+        st.subheader("📍 Combined Timeframe Bias")
+        def classify_bias(row):
+            above_vah = row['Last'] > row['VAH']
+            below_val = row['Last'] < row['VAL']
+            in_value = row['VAL'] <= row['Last'] <= row['VAH']
+            rising_vol = row['Volume'] > 1000 and row.get('Volume_4H', 0) > 5000 and row.get('Volume_Daily', 0) > 5000
 
-        # --- Rule Logic Functions ---
-        def get_bias_mode(row):
-            outside_high = row['Last'] > row['Value Area High Value']
-            outside_low = row['Last'] < row['Value Area Low Value']
-            inside_value = not outside_high and not outside_low
-
-            tpo_volume = row.get('Volume', 0)
-            h4_volume = row.get('Volume_4H', 0)
-            daily_volume = row.get('Volume_Daily', 0)
-            rising_volume = tpo_volume > 1000 and h4_volume > 5000 and daily_volume > 5000
-
-            bias_strong_up = row.get('Last_Daily', 0) > row.get('Value Area High Value_Daily', 0)
-            bias_strong_down = row.get('Last_Daily', 0) < row.get('Value Area Low Value_Daily', 0)
-
-            if (outside_high or outside_low) and rising_volume and (bias_strong_up or bias_strong_down):
-                return "Initiative Bias"
-            elif inside_value and not rising_volume:
-                return "Responsive Bias"
-            elif inside_value and rising_volume:
-                return "Neutral - Watch for Breakout"
-            elif (outside_high or outside_low) and not rising_volume:
-                return "Fakeout - Wait"
+            if above_vah and rising_vol:
+                return "Initiative Buy"
+            elif below_val and rising_vol:
+                return "Initiative Sell"
+            elif in_value and not rising_vol:
+                return "Responsive/Wait"
+            elif above_vah and not rising_vol:
+                return "Exhaustion Buy"
+            elif below_val and not rising_vol:
+                return "Exhaustion Sell"
             else:
                 return "Unclear"
 
-        def get_session_bias(row):
-            if row.get('Last_Daily', 0) > row.get('Value Area High Value_Daily', 0):
-                return "Daily Bullish Bias"
-            elif row.get('Last_Daily', 0) < row.get('Value Area Low Value_Daily', 0):
-                return "Daily Bearish Bias"
-            else:
-                return "Daily Neutral"
+        merged['Bias'] = merged.apply(classify_bias, axis=1)
+        st.dataframe(merged[['Datetime', 'Last', 'Bias']].tail(20))
 
-        # Apply rules
-        merged['Bias Mode'] = merged.apply(get_bias_mode, axis=1)
-        merged['Session Bias'] = merged.apply(get_session_bias, axis=1)
-
-        # --- Session Planner Table ---
-        st.subheader("Session Planner Summary")
-        session_summary = merged[['Datetime', 'Last', 'Session Bias', 'Bias Mode']].copy()
-        st.dataframe(session_summary.tail(100))
-
-        # --- Visualization ---
-        st.subheader("Bias Mode Over Time")
-        fig, ax = plt.subplots(figsize=(12, 5))
-        color_map = {
-            'Initiative Bias': 'green',
-            'Responsive Bias': 'blue',
-            'Neutral - Watch for Breakout': 'orange',
-            'Fakeout - Wait': 'red',
-            'Unclear': 'gray'
-        }
-        colors = merged['Bias Mode'].map(color_map)
-        ax.scatter(merged['Datetime'], merged['Last'], c=colors, label='Bias Mode', alpha=0.7)
-        ax.set_title("Price vs. Bias Mode")
-        ax.set_ylabel("Last Price")
-        ax.set_xlabel("Datetime")
-        ax.grid(True)
-        st.pyplot(fig)
-
-        # --- Export Section ---
-        st.subheader("Export Filtered Trade Signals")
-        selected_bias = st.multiselect("Select Bias Modes to Export", merged['Bias Mode'].unique())
-        filtered_df = merged[merged['Bias Mode'].isin(selected_bias)]
-        st.dataframe(filtered_df[['Datetime', 'Last', 'Bias Mode', 'Session Bias']])
-
-        csv = filtered_df.to_csv(index=False).encode('utf-8')
-        st.download_button("Download Filtered Signals as CSV", data=csv, file_name="filtered_signals.csv")
+        st.download_button("📥 Download Bias Summary CSV", data=merged.to_csv(index=False), file_name="bias_summary.csv")
 
     except Exception as e:
         st.error(f"An error occurred: {e}")
 
 else:
-    st.info("Please upload all three data files to begin.")
+    st.info("Upload all 3 files (Daily, 4H, 30min) to begin.")
