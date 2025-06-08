@@ -19,7 +19,8 @@ It uses:
 daily_file = st.file_uploader("📅 Upload Daily CSV", type=["csv"])
 h4_file = st.file_uploader("🕓 Upload 4H CSV", type=["csv"])
 
-def clean(df, suffix):
+def clean(upload_file, suffix):
+    df = pd.read_csv(upload_file)  # ✅ FIX: read from UploadedFile object
     df.columns = [c.strip() for c in df.columns]
     df['Date'] = df['Date'].astype(str)
     df['Time'] = df['Time'].astype(str) if 'Time' in df.columns else '00:00:00'
