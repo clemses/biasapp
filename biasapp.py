@@ -23,39 +23,42 @@ if tpo_file and h4_file and daily_file:
                 df['Time'] = '00:00:00'
             return df
 
-        def normalize_column_names(df):
-            rename_map = {
-                'Close': 'Last',
-                'Last Price': 'Last',
-                'LastPrice': 'Last'
-            }
-            for old, new in rename_map.items():
-                if old in df.columns and 'Last' not in df.columns:
-                    df.rename(columns={old: new}, inplace=True)
+        def normalize_column_names(df, label="Unknown"):
+            # Try to rename common 'Last' variants
+            last_variants = ['Last', 'Close', 'Last Price', 'LastPrice']
+            found = False
+            for col in df.columns:
+                if col.strip() in last_variants:
+                    df.rename(columns={col: 'Last'}, inplace=True)
+                    found = True
+                    break
+            # If still missing, use the first float column that isn’t Date/Time
+            if 'Last' not in df.columns:
+                for col in df.columns:
+                    if col not in ['Date', 'Time'] and pd.api.types.is_numeric_dtype(df[col]):
+                        df.rename(columns={col: 'Last'}, inplace=True)
+                        found = True
+                        break
+            if not found:
+                raise ValueError(f"Missing required column 'Last' in {label} data.")
             return df
 
-        tpo_df = normalize_column_names(read_sierra_file(tpo_file))
-        h4_df = normalize_column_names(read_sierra_file(h4_file))
-        daily_df = normalize_column_names(read_sierra_file(daily_file))
+        # Read and normalize
+        tpo_df = normalize_column_names(read_sierra_file(tpo_file), label="TPO")
+        h4_df = normalize_column_names(read_sierra_file(h4_file), label="4H")
+        daily_df = normalize_column_names(read_sierra_file(daily_file), label="Daily")
 
-        # Check for critical column
-        required_columns = ['Last']
-        for name, df in {'TPO': tpo_df, '4H': h4_df, 'Daily': daily_df}.items():
-            for col in required_columns:
-                if col not in df.columns:
-                    raise ValueError(f"Missing required column '{col}' in {name} data.")
-
-        # Create datetime
+        # Build datetime
         tpo_df['Datetime'] = pd.to_datetime(tpo_df['Date'] + ' ' + tpo_df['Time'])
         h4_df['Datetime'] = pd.to_datetime(h4_df['Date'] + ' ' + h4_df['Time'])
         daily_df['Datetime'] = pd.to_datetime(daily_df['Date'] + ' ' + daily_df['Time'])
 
-        # Sort
+        # Sort for merging
         tpo_df = tpo_df.sort_values('Datetime')
         h4_df = h4_df.sort_values('Datetime')
         daily_df = daily_df.sort_values('Datetime')
 
-        # Merge
+        # Merge all
         merged = pd.merge_asof(tpo_df, h4_df, on='Datetime', direction='backward', suffixes=('', '_4H'))
         merged = pd.merge_asof(merged, daily_df, on='Datetime', direction='backward', suffixes=('', '_Daily'))
 
