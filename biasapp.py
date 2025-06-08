@@ -41,23 +41,8 @@ def clean(upload_file, suffix):
     return df
 
 if daily_file and h4_file and min30_file:
-    try:
-        df_d = clean(daily_file, "D")
-        df_h = clean(h4_file, "H")
-        df_m = clean(min30_file, "M")
-
         # === Interactive date filter
         all_dates = df_d['Datetime'].dt.date.unique()
-    try:
-        if len(all_dates) >= 3:
-        lookback_days = st.slider("Lookback Window (days)", min_value=1, max_value=30, value=5)
-        start_date = st.date_input("Start date", value=all_dates[-3], min_value=min(all_dates), max_value=max(all_dates), key="session_date_input")
-        session_day = pd.to_datetime(start_date).date()
-        lookback_date = session_day - pd.Timedelta(days=lookback_days)
-        df_d = df_d[df_d['Datetime'].dt.date.between(lookback_date, session_day)]
-        df_h = df_h[df_h['Datetime'].dt.date.between(lookback_date, session_day)]
-        df_m = df_m[df_m['Datetime'].dt.date == session_day]
-
         # === Daily Bias
         poc_trend = latest_d['Point of Control_D'].is_monotonic_increasing
         vwaps = (latest_d['Volume Weighted Average Price_D'] > latest_d['Point of Control_D']).sum()
