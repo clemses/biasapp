@@ -39,8 +39,18 @@ if daily_file and h4_file and tpo_file:
         h4 = read_and_prepare(h4_file, "4H")
         tpo = read_and_prepare(tpo_file, "30min")
 
-        merged = pd.merge_asof(tpo, h4, on='Datetime', direction='backward', suffixes=('', '_4H'))
-        merged = pd.merge_asof(merged, daily, on='Datetime', direction='backward', suffixes=('', '_Daily'))
+        
+tpo_cols = set(tpo.columns)
+h4 = h4[[col for col in h4.columns if col not in tpo_cols or col == 'Datetime']]
+merged = pd.merge_asof(tpo, h4, on='Datetime', direction='backward', suffixes=('', '_4H'))
+st.write('🧪 After 4H Merge – Datetime sample:', merged['Datetime'].tail())
+
+        
+merged_cols = set(merged.columns)
+daily = daily[[col for col in daily.columns if col not in merged_cols or col == 'Datetime']]
+merged = pd.merge_asof(merged, daily, on='Datetime', direction='backward', suffixes=('', '_Daily'))
+st.write('🧪 After Daily Merge – Datetime sample:', merged['Datetime'].tail())
+
 
         st.subheader("🧠 Daily Bias Interpretation")
         most_recent = merged.iloc[-1]
