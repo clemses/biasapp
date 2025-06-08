@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 
-st.title("📊 Bias & Trade App – With Sierra Chart TXT Support")
+st.title("📊 Bias & Trade App – Sierra Chart TXT + Timestamp Support")
 
 st.sidebar.header("📁 Upload Files")
 daily_file = st.sidebar.file_uploader("Upload Daily File", type=["csv", "txt"])
@@ -12,7 +12,7 @@ def load_file(file):
         df = pd.read_csv(file)
     except:
         file.seek(0)
-        df = pd.read_csv(file, delimiter='\t')  # Try tab-delimited
+        df = pd.read_csv(file, delimiter='\t')
     return df
 
 def clean_df(df):
@@ -20,9 +20,9 @@ def clean_df(df):
     df.rename(columns={
         "Open": "Open", "Last": "Close", "Point of Control": "POC",
         "Value Area High Value": "VAH", "Value Area Low Value": "VAL",
-        "Date": "Date", "Volume Weighted Average Price": "VWAP"
+        "Date": "Date", "Time": "Time", "Volume Weighted Average Price": "VWAP"
     }, inplace=True)
-    df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+    df["Date"] = pd.to_datetime(df["Date"].astype(str) + " " + df["Time"].astype(str), errors="coerce") if "Time" in df else pd.to_datetime(df["Date"], errors="coerce")
     df.dropna(subset=["Date", "Open", "Close", "POC", "VAH", "VAL"], inplace=True)
     df.sort_values("Date", inplace=True)
     return df
@@ -93,10 +93,11 @@ def generate_trade_recommendations(current, reference):
 
 def display_analysis(df, label="Daily"):
     if len(df) >= 2:
-        date_options = df["Date"].dt.date.astype(str).tolist()
-        selected = st.multiselect(f"Select two {label} dates", date_options, default=date_options[-2:])
+        df["Label"] = df["Date"].dt.strftime("%Y-%m-%d %H:%M:%S")
+        options = df["Label"].tolist()
+        selected = st.multiselect(f"Select two {label} candles", options, default=options[-2:])
         if len(selected) == 2:
-            sel = df[df["Date"].dt.date.astype(str).isin(selected)].sort_values("Date")
+            sel = df[df["Label"].isin(selected)].sort_values("Date")
             today, prev = sel.iloc[1], sel.iloc[0]
             bias_notes = interpret_bias(today, prev)
             trade_recs = generate_trade_recommendations(today, prev)
@@ -111,7 +112,7 @@ def display_analysis(df, label="Daily"):
 
             st.dataframe(sel[["Date", "Open", "Close", "POC", "VAL", "VAH", "VWAP", "Volume"]])
         else:
-            st.info("Please select exactly 2 dates.")
+            st.info("Please select exactly 2.")
 
 if daily_file:
     st.subheader("📅 Daily Bias & Trades")
