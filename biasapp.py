@@ -55,7 +55,11 @@ if daily_file and h4_file and min30_file:
             df_d = df_d[df_d['Datetime'].dt.date.between(lookback_date, session_day)]
             df_h = df_h[df_h['Datetime'].dt.date.between(lookback_date, session_day)]
             df_m = df_m[df_m['Datetime'].dt.date == session_day]
-    lookback_date = session_day - pd.Timedelta(days=5)
+            start_date = st.date_input("Start date", value=all_dates[-3], min_value=min(all_dates), max_value=max(all_dates))
+            session_day = pd.to_datetime(start_date).date()
+            df_d = df_d[df_d['Datetime'].dt.date.between(lookback_date, session_day)]
+            df_h = df_h[df_h['Datetime'].dt.date.between(lookback_date, session_day)]
+            df_m = df_m[df_m['Datetime'].dt.date == session_day]
 
         # === Daily Bias
         df_d['DateOnly'] = df_d['Datetime'].dt.date
