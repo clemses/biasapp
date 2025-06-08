@@ -54,6 +54,11 @@ if daily_file and h4_file and min30_file:
             df_h = df_h[df_h['Datetime'].dt.date >= start_date]
             df_m = df_m[df_m['Datetime'].dt.date >= start_date]
 
+        # === Apply date filter
+        df_d = df_d[df_d['Datetime'].dt.date >= start_date]
+        df_h = df_h[df_h['Datetime'].dt.date >= start_date]
+        df_m = df_m[df_m['Datetime'].dt.date >= start_date]
+
         # === Daily Bias
         df_d['DateOnly'] = df_d['Datetime'].dt.date
         latest_d = df_d.groupby('DateOnly').tail(1).sort_values('DateOnly').tail(3).reset_index(drop=True)
