@@ -32,7 +32,7 @@ if daily_file and h4_file and tpo_file:
                 if src in df.columns:
                     df.rename(columns={src: dst}, inplace=True)
             df['Datetime'] = pd.to_datetime(df['Date'] + ' ' + df['Time'])
-            df = df.sort_values('Datetime').drop_duplicates(subset='Datetime', keep='last')
+            df = df.sort_values('Datetime')
             return df
 
         daily = read_and_prepare(daily_file, "Daily")
