@@ -2,6 +2,7 @@
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
+import io
 
 st.set_page_config(layout="wide")
 st.title("Bias Mode Rule Engine + Session Planner")
@@ -11,14 +12,17 @@ This tool classifies market bias mode (Initiative vs Responsive) based on 30min 
 """)
 
 # --- Upload section ---
-tpo_file = st.file_uploader("Upload 30min TPO CSV file", type=["csv"])
+tpo_file = st.file_uploader("Upload 30min TPO file (CSV or TXT from Sierra Chart)", type=["csv", "txt"])
 h4_file = st.file_uploader("Upload 4H Bias CSV file", type=["csv"])
 daily_file = st.file_uploader("Upload Daily Bias CSV file", type=["csv"])
 
 if tpo_file and h4_file and daily_file:
     try:
-        # Load data
-        tpo_df = pd.read_csv(tpo_file)
+        def read_sierra_file(uploaded_file):
+            # Try to parse it as a CSV with comma delimiter
+            return pd.read_csv(uploaded_file)
+
+        tpo_df = read_sierra_file(tpo_file)
         h4_df = pd.read_csv(h4_file)
         daily_df = pd.read_csv(daily_file)
 
@@ -38,12 +42,10 @@ if tpo_file and h4_file and daily_file:
 
         # --- Rule Logic Functions ---
         def get_bias_mode(row):
-            # Location logic
             outside_high = row['Last'] > row['Value Area High Value']
             outside_low = row['Last'] < row['Value Area Low Value']
             inside_value = not outside_high and not outside_low
 
-            # Volume logic (relaxed thresholds for testing)
             tpo_volume = row.get('Volume', 0)
             h4_volume = row.get('Volume_4H', 0)
             daily_volume = row.get('Volume_Daily', 0)
