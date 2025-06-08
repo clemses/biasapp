@@ -1,95 +1,62 @@
-clemens
-import streamlit as st
-import pandas as pd
+"""
+📊 Multi-Timeframe Bias Rule Sheet
 
-st.set_page_config(layout="centered")
-st.title("📋 Multi-Timeframe Bias Scanner – Configurable & Text-Only")
+✅ General Principle:
+Each timeframe (Daily, 4H, 30min) contributes to the session bias through predefined rules. Each rule outputs a partial bias classification (e.g., bullish, bearish, neutral), which is combined into a final session-level classification.
 
-st.markdown("Upload your Sierra Chart exports for Daily, 4H, and 30min. Configure bias thresholds below.")
+---
 
-# === Threshold controls ===
-st.sidebar.header("🔧 Bias Threshold Settings")
+🗓 Daily Chart Rules
 
-poc_up_days = st.sidebar.slider("POC up days (Daily)", 1, 3, 2)
-vwaps_above_poc = st.sidebar.slider("VWAP > POC days (Daily)", 0, 3, 2)
-closes_above_vah = st.sidebar.slider("Closes above VAH (Daily)", 0, 3, 2)
-closes_below_val = st.sidebar.slider("Closes below VAL (Daily)", 0, 3, 2)
+Volume & Price Structure (Lookback: configurable N days):
+- ✅ Count of days where POC increased → Signals directional confidence
+- ✅ Days where VWAP is above POC → Suggests bullish conviction
+- ✅ Days with closes above VAH → Signals initiative buying
+- ✅ Days with closes below VAL → Signals initiative selling
 
-h4_winning_vwaps = st.sidebar.slider("4H VWAP > POC bars", 0, 6, 4)
-h4_above_vah = st.sidebar.slider("4H closes above VAH", 0, 6, 2)
-h4_below_val = st.sidebar.slider("4H closes below VAL", 0, 6, 2)
+Thresholds:
+- Configurable minimums for each of the above (e.g., at least 2 bullish closes to trigger bias).
 
-min_last_threshold = st.sidebar.slider("30min ΔPrice Threshold", -20, 20, 5)
-min_vwap_threshold = st.sidebar.slider("30min ΔVWAP Threshold", -10, 10, 3)
+Daily Bias Outcomes:
+- Strong Bullish / Bullish / Neutral / Bearish / Strong Bearish
+- Determined by how many bullish vs bearish signals trigger above thresholds
 
-# === Upload files ===
-daily_file = st.file_uploader("📅 Upload Daily CSV", type=["csv"])
-h4_file = st.file_uploader("🕓 Upload 4H CSV", type=["csv"])
-min30_file = st.file_uploader("🕧 Upload 30min CSV", type=["csv"])
+---
 
-def clean(upload_file, suffix):
-    df = pd.read_csv(upload_file)
-    df.columns = [c.strip() for c in df.columns]
-    df['Date'] = df['Date'].astype(str)
-    df['Time'] = df['Time'].astype(str) if 'Time' in df.columns else '00:00:00'
-    df['Datetime'] = pd.to_datetime(df['Date'] + ' ' + df['Time'], errors='coerce')
-    df = df.sort_values("Datetime").drop_duplicates(subset="Datetime")
-    keep = ['Datetime', 'Last', 'Volume', 'Point of Control', 'Value Area High Value', 'Value Area Low Value', 'Volume Weighted Average Price']
-    df = df[[c for c in keep if c in df.columns]]
-    df.rename(columns={c: f"{c}_{suffix}" for c in df.columns if c != 'Datetime'}, inplace=True)
-    df = df.loc[:, ~df.columns.duplicated()]
-    return df
+⏱ 4H Chart Rules
 
-if daily_file and h4_file and min30_file:
-        # === Interactive date filter
-        all_dates = df_d['Datetime'].dt.date.unique()
-        # === Daily Bias
-        poc_trend = latest_d['Point of Control_D'].is_monotonic_increasing
-        vwaps = (latest_d['Volume Weighted Average Price_D'] > latest_d['Point of Control_D']).sum()
-        above_vah = (latest_d['Last_D'] > latest_d['Value Area High Value_D']).sum()
-        below_val = (latest_d['Last_D'] < latest_d['Value Area Low Value_D']).sum()
-        if poc_trend and vwaps >= vwaps_above_poc and above_vah >= closes_above_vah:
-            daily_bias = "STRONG BULLISH"
-        elif below_val >= closes_below_val and not poc_trend:
-            daily_bias = "STRONG BEARISH"
-        else:
-            daily_bias = "NEUTRAL"
+Recent N 4H candles (configurable):
+- ✅ Number of candles with:
+  - VWAP > POC → Signals consistent upward pressure
+  - Closes above VAH → Suggests breakout behavior
+  - Closes below VAL → Suggests breakdown behavior
 
-        # === 4H Bias
-        h_vwap_poc = (recent_h['Volume Weighted Average Price_H'] > recent_h['Point of Control_H']).sum()
-        h_above_vah = (recent_h['Last_H'] > recent_h['Value Area High Value_H']).sum()
-        h_below_val = (recent_h['Last_H'] < recent_h['Value Area Low Value_H']).sum()
-        if h_vwap_poc >= h4_winning_vwaps and h_above_vah >= h4_above_vah:
-            h4_bias = "4H Bullish Bias"
-        elif h_below_val >= h4_below_val:
-            h4_bias = "4H Bearish Bias"
-        else:
-            h4_bias = "4H Neutral"
+4H Bias Outcomes:
+- 4H Bullish Bias / Neutral / 4H Bearish Bias
 
-        # === 30min Trend
-        if delta_last > min_last_threshold and delta_vwap > min_vwap_threshold:
-            min30_trend = "Short-term Upswing"
-        elif delta_last < -min_last_threshold and delta_vwap < -min_vwap_threshold:
-            min30_trend = "Short-term Downswing"
-        else:
-            min30_trend = "Flat / Choppy"
+---
 
-        # === Summary
-        st.subheader("🧠 Final Session Bias")
-        st.markdown(f"""
-        **Daily Bias:** `{daily_bias}`  
-        **4H Bias:** `{h4_bias}`  
-        **30min Trend:** `{min30_trend}`
-        """)
+🕒 30-Min Chart Rules
 
-        if daily_bias == "STRONG BULLISH" and h4_bias == "4H Bullish Bias":
-            st.success("✅ Session Bias: HIGH CONFIDENCE LONG")
-        elif daily_bias == "STRONG BEARISH" and h4_bias == "4H Bearish Bias":
-            st.error("🚨 Session Bias: HIGH CONFIDENCE SHORT")
-        else:
-            st.warning("🟡 Session Bias: MIXED or ROTATION")
+Short-Term Price Action Structure:
+- ✅ Mean change of closing prices (momentum proxy)
+- ✅ Mean Δ VWAP (intraday volume-weighted trend)
 
-    except Exception as e:
-        st.error(f"Processing error: {e}")
-else:
-    st.info("Please upload Daily, 4H, and 30min files.")
+Thresholds:
+- Average change in price above +X → Bullish
+- Below −X → Bearish
+- Between −X and +X → Flat / Choppy
+
+30min Trend Classification:
+- Bullish Trend / Bearish Trend / Flat-Choppy
+
+---
+
+🧠 Final Session Bias (Aggregate Rule Logic)
+
+Combination Logic:
+- 🟢 High Confidence Long: Strong Bullish + 4H Bullish + Bullish Trend
+- 🔴 High Confidence Short: Strong Bearish + 4H Bearish + Bearish Trend
+- 🟡 Mixed or Rotation: Conflicting signals across timeframes
+- ⚪️ No Bias: All timeframes are neutral or inconclusive
+"""
