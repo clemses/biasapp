@@ -42,6 +42,14 @@ def clean(upload_file, suffix):
 
 if daily_file and h4_file and min30_file:
     try:
+            session_date = pd.to_datetime(start_date)
+            session_day = session_date.date()
+            lookback_date = session_date - pd.Timedelta(days=5)
+            df_d = df_d[df_d['Datetime'].dt.date <= session_day]
+            df_d = df_d[df_d['Datetime'].dt.date >= lookback_date.date()]
+            df_h = df_h[df_h['Datetime'].dt.date <= session_day]
+            df_h = df_h[df_h['Datetime'].dt.date >= lookback_date.date()]
+            df_m = df_m[df_m['Datetime'].dt.date == session_day]
         df_d = clean(daily_file, "D")
         df_h = clean(h4_file, "H")
         df_m = clean(min30_file, "M")
@@ -50,14 +58,6 @@ if daily_file and h4_file and min30_file:
         all_dates = df_d['Datetime'].dt.date.unique()
         if len(all_dates) >= 3:
             start_date = st.date_input("Start date", value=all_dates[-3], min_value=min(all_dates), max_value=max(all_dates))
-    session_date = pd.to_datetime(start_date)
-    session_day = session_date.date()
-    lookback_date = session_date - pd.Timedelta(days=5)
-    df_d = df_d[df_d['Datetime'].dt.date <= session_day]
-    df_d = df_d[df_d['Datetime'].dt.date >= lookback_date.date()]
-    df_h = df_h[df_h['Datetime'].dt.date <= session_day]
-    df_h = df_h[df_h['Datetime'].dt.date >= lookback_date.date()]
-    df_m = df_m[df_m['Datetime'].dt.date == session_day]
             df_d = df_d[df_d['Datetime'].dt.date >= start_date]
             df_h = df_h[df_h['Datetime'].dt.date >= start_date]
             df_m = df_m[df_m['Datetime'].dt.date >= start_date]
