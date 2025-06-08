@@ -18,7 +18,8 @@ def clean_df(df):
         "Value Area Low Value": "VAL",
         "Date": "Date"
     }, inplace=True)
-    df["Date"] = pd.to_datetime(df["Date"])
+    df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+    df.dropna(subset=["Date", "Open", "Close", "POC", "VAH", "VAL"], inplace=True)
     df.sort_values("Date", inplace=True)
     return df
 
@@ -47,28 +48,37 @@ def interpret_bias(current, reference):
 if daily_file:
     st.subheader("🗓️ Daily Bias Analysis")
     daily_df = clean_df(pd.read_csv(daily_file))
-    date_options = daily_df["Date"].dt.date.astype(str).tolist()
-    selected = st.multiselect("Select two dates for comparison", date_options, default=date_options[-2:])
+    if len(daily_df) >= 2:
+        date_options = daily_df["Date"].dt.date.astype(str).tolist()
+        selected = st.multiselect("Select two dates for comparison (Daily)", date_options, default=date_options[-2:])
 
-    if len(selected) == 2:
-        today, prev = daily_df[daily_df["Date"].dt.date.astype(str).isin(selected)].sort_values("Date").iloc[-2:]
-        bias = interpret_bias(today, prev)
-        st.markdown(f"### 🧭 Daily Bias: **{bias}**")
-        st.dataframe(pd.DataFrame([prev, today])[["Date", "Open", "Close", "VAL", "VAH", "POC"]])
+        if len(selected) == 2:
+            selection = daily_df[daily_df["Date"].dt.date.astype(str).isin(selected)].sort_values("Date")
+            if len(selection) == 2:
+                today, prev = selection.iloc[1], selection.iloc[0]
+                bias = interpret_bias(today, prev)
+                st.markdown(f"### 🧭 Daily Bias: **{bias}**")
+                st.dataframe(selection[["Date", "Open", "Close", "VAL", "VAH", "POC"]])
+        else:
+            st.info("Please select exactly 2 dates.")
     else:
-        st.info("Please select exactly 2 dates.")
+        st.warning("Daily file must contain at least 2 rows.")
 
 if h4_file:
     st.subheader("⏱️ 4H Bias Analysis")
     h4_df = clean_df(pd.read_csv(h4_file))
-
     if len(h4_df) >= 3:
-        last_n = st.selectbox("Compare last 4H candle to:", options=[1, 2], format_func=lambda x: f"{x}-back")
-        current_4h = h4_df.iloc[-1]
-        reference_4h = h4_df.iloc[-(last_n + 1)]
+        date_options_4h = h4_df["Date"].dt.strftime("%Y-%m-%d %H:%M:%S").tolist()
+        selected_4h = st.multiselect("Select two 4H candles to compare", options=date_options_4h, default=date_options_4h[-2:])
 
-        bias = interpret_bias(current_4h, reference_4h)
-        st.markdown(f"### 🧭 4H Bias: **{bias}**")
-        st.dataframe(pd.DataFrame([reference_4h, current_4h])[["Date", "Open", "Close", "VAL", "VAH", "POC"]])
+        if len(selected_4h) == 2:
+            selection_4h = h4_df[h4_df["Date"].dt.strftime("%Y-%m-%d %H:%M:%S").isin(selected_4h)].sort_values("Date")
+            if len(selection_4h) == 2:
+                current_4h, reference_4h = selection_4h.iloc[1], selection_4h.iloc[0]
+                bias_4h = interpret_bias(current_4h, reference_4h)
+                st.markdown(f"### 🧭 4H Bias: **{bias_4h}**")
+                st.dataframe(selection_4h[["Date", "Open", "Close", "VAL", "VAH", "POC"]])
+        else:
+            st.info("Please select exactly 2 4H candles.")
     else:
-        st.warning("You need at least 3 rows in the 4H file for comparison.")
+        st.warning("4H file must contain at least 3 rows.")
