@@ -1,127 +1,108 @@
-
-from datetime import datetime
-import pandas as pd
 import streamlit as st
+import pandas as pd
+import matplotlib.pyplot as plt
 
-st.set_page_config(page_title="Bias Dashboard", layout="wide")
-st.title("📊 Bias Dashboard – Structure + Volume & Time (Optional) + Export")
+st.set_page_config(layout="wide")
+st.title("Bias Mode Rule Engine + Session Planner")
 
-# === UPLOAD FILES ===
-st.sidebar.header("📂 Upload CSVs")
-daily_file = st.sidebar.file_uploader("Upload Daily CSV", type=["csv", "txt"])
-fourh_file = st.sidebar.file_uploader("Upload 4H CSV", type=["csv", "txt"])
+st.markdown("""
+This tool classifies market bias mode (Initiative vs Responsive) based on 30min TPO data, 4H and Daily chart structure, and generates a full session planner with visual signals and export functionality.
+""")
 
-# === CLEAN DATA ===
-def clean_df(df):
-    df.columns = df.columns.str.strip()
-    col_map = {
-        'Last': 'Close',
-        'Point of Control': 'POC',
-        'Value Area Low Value': 'VAL',
-        'Value Area High Value': 'VAH',
-        'Volume Weighted Average Price': 'VWAP',
-        '# of Trades': 'Trades'
+# --- Upload section ---
+tpo_file = st.file_uploader("Upload 30min TPO CSV file", type=["csv"])
+h4_file = st.file_uploader("Upload 4H Bias CSV file", type=["csv"])
+daily_file = st.file_uploader("Upload Daily Bias CSV file", type=["csv"])
+
+if tpo_file and h4_file and daily_file:
+    # Load data
+    tpo_df = pd.read_csv(tpo_file)
+    h4_df = pd.read_csv(h4_file)
+    daily_df = pd.read_csv(daily_file)
+
+    # Format datetime columns
+    tpo_df['Datetime'] = pd.to_datetime(tpo_df['Date'] + ' ' + tpo_df['Time'])
+    h4_df['Datetime'] = pd.to_datetime(h4_df['Date'] + ' ' + h4_df['Time'])
+    daily_df['Datetime'] = pd.to_datetime(daily_df['Date'])
+
+    # Sort
+    tpo_df = tpo_df.sort_values('Datetime')
+    h4_df = h4_df.sort_values('Datetime')
+    daily_df = daily_df.sort_values('Datetime')
+
+    # Merge
+    merged = pd.merge_asof(tpo_df, h4_df, on='Datetime', direction='backward', suffixes=('', '_4H'))
+    merged = pd.merge_asof(merged, daily_df, on='Datetime', direction='backward', suffixes=('', '_Daily'))
+
+    # --- Rule Logic Functions ---
+    def get_bias_mode(row):
+        outside_high = row['Last'] > row['Value Area High Value']
+        outside_low = row['Last'] < row['Value Area Low Value']
+        inside_value = not outside_high and not outside_low
+
+        tpo_volume = row['Volume']
+        h4_volume = row.get('Volume_4H', 0)
+        daily_volume = row.get('Volume_Daily', 0)
+        rising_volume = tpo_volume > 10000 and h4_volume > 100000 and daily_volume > 100000
+
+        bias_strong_up = row['Last_Daily'] > row['Value Area High Value_Daily']
+        bias_strong_down = row['Last_Daily'] < row['Value Area Low Value_Daily']
+
+        if (outside_high or outside_low) and rising_volume and (bias_strong_up or bias_strong_down):
+            return "Initiative Bias"
+        elif inside_value and not rising_volume:
+            return "Responsive Bias"
+        elif inside_value and rising_volume:
+            return "Neutral - Watch for Breakout"
+        elif (outside_high or outside_low) and not rising_volume:
+            return "Fakeout - Wait"
+        else:
+            return "Unclear"
+
+    def get_session_bias(row):
+        # Strong daily breakout signal
+        if row['Last_Daily'] > row['Value Area High Value_Daily']:
+            return "Daily Bullish Bias"
+        elif row['Last_Daily'] < row['Value Area Low Value_Daily']:
+            return "Daily Bearish Bias"
+        else:
+            return "Daily Neutral"
+
+    # Apply classifications
+    merged['Bias Mode'] = merged.apply(get_bias_mode, axis=1)
+    merged['Session Bias'] = merged.apply(get_session_bias, axis=1)
+
+    # --- Session Bias Summary ---
+    st.subheader("Session Planner Summary")
+    session_summary = merged[['Datetime', 'Last', 'Session Bias', 'Bias Mode']].copy()
+    st.dataframe(session_summary.tail(100))
+
+    # --- Visual Chart Output ---
+    st.subheader("Bias Mode Over Time")
+    fig, ax = plt.subplots(figsize=(12, 5))
+    color_map = {
+        'Initiative Bias': 'green',
+        'Responsive Bias': 'blue',
+        'Neutral - Watch for Breakout': 'orange',
+        'Fakeout - Wait': 'red',
+        'Unclear': 'gray'
     }
-    df = df.rename(columns=col_map)
-    required = ['Date', 'Open', 'Close', 'POC', 'VAL', 'VAH', 'VWAP', 'Volume']
-    df['Trades'] = df['Trades'] if 'Trades' in df.columns else None
-    missing = [col for col in required if col not in df.columns]
-    if missing:
-        st.error(f"Missing columns: {', '.join(missing)}")
-        return pd.DataFrame()
-    df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
-    for col in required[1:]:
-        df[col] = pd.to_numeric(df[col], errors='coerce')
-    if 'Trades' in df.columns:
-        df['Trades'] = pd.to_numeric(df['Trades'], errors='coerce')
-    return df.dropna(subset=['Date']).sort_values("Date").reset_index(drop=True)
+    colors = merged['Bias Mode'].map(color_map)
+    ax.scatter(merged['Datetime'], merged['Last'], c=colors, label='Bias Mode', alpha=0.7)
+    ax.set_title("Price vs. Bias Mode")
+    ax.set_ylabel("Last Price")
+    ax.set_xlabel("Datetime")
+    ax.grid(True)
+    st.pyplot(fig)
 
-# === SCORING + LOGIC ===
-def interpret_bias(curr, window):
-    va_range = curr["VAH"] - curr["VAL"]
-    center = curr["VAL"] + va_range / 2
-    summary = []
-    reco = []
-    score = 0
+    # --- Export Section ---
+    st.subheader("Export Filtered Trade Signals")
+    selected_bias = st.multiselect("Select Bias Modes to Export", merged['Bias Mode'].unique())
+    filtered_df = merged[merged['Bias Mode'].isin(selected_bias)]
+    st.dataframe(filtered_df[['Datetime', 'Last', 'Bias Mode', 'Session Bias']])
 
-    if abs(curr["POC"] - center) < va_range * 0.1:
-        summary.append("POC near center → balanced"); score += 1
-    if curr["POC"] < window["POC"].mean():
-        summary.append("POC falling → bearish migration"); score += 1
-    if abs(curr["VWAP"] - curr["POC"]) < va_range * 0.1:
-        summary.append("VWAP ≈ POC → fair value zone"); score += 1
-        reco.append("📯 Fade extremes")
+    csv = filtered_df.to_csv(index=False).encode('utf-8')
+    st.download_button("Download Filtered Signals as CSV", data=csv, file_name="filtered_signals.csv")
 
-    if curr["Close"] < curr["VAL"] and curr["Close"] > curr["Open"]:
-        summary.append("Failed breakdown (below VAL rejected)"); score += 1
-    if curr["Close"] > curr["VAL"] and abs(curr["Close"] - curr["VAL"]) < va_range * 0.2:
-        reco.append("🟢 Reversal: VAL tested and rejected"); score += 1
-
-    avg_vol = window["Volume"].mean()
-    if curr["Volume"] > 1.3 * avg_vol:
-        summary.append("High volume → expansion or strong interest"); score += 1
-        if abs(curr["Close"] - curr["Open"]) < va_range * 0.2:
-            summary.append("Volume spike but small body → absorption")
-            reco.append("Fade unless confirmed")
-
-    if 'Trades' in curr and curr['Trades'] and window['Trades'].notna().sum() > 0:
-        avg_trades = window["Trades"].mean()
-        if curr["Trades"] < 0.8 * avg_trades and abs(curr["Close"] - curr["Open"]) > va_range * 0.5:
-            summary.append("Large range but low trade count → inefficient move")
-            reco.append("⚠️ Potential fade setup")
-
-    return summary, reco, score
-
-# === DISPLAY LOGIC ===
-def analyze(df, tf_name):
-    st.subheader(f"📈 {tf_name} Bias Interpretation")
-    dates = df["Date"].dt.date.unique()
-    selected = st.date_input(f"Select {tf_name} Candle", value=dates[-1], key=tf_name)
-    lookback = st.slider(f"Lookback for {tf_name}", 3, 10, 5, key=f"{tf_name}_slider")
-
-    if selected not in df["Date"].dt.date.values:
-        st.warning("Date not in dataset."); return
-
-    idx = df[df["Date"].dt.date == selected].index[0]
-    if idx < lookback:
-        st.warning("Not enough candles for lookback."); return
-
-    window = df.iloc[idx - lookback:idx]
-    curr = df.iloc[idx]
-    summary, reco, score = interpret_bias(curr, window)
-
-    st.markdown("### 🧠 Interpretation")
-    for s in summary: st.write("- " + s)
-    st.markdown("### 🎯 Trade Recommendation")
-    for r in reco: st.write("- " + r)
-
-    st.markdown("### 📌 Key Levels")
-    st.code(f"VAL: {curr['VAL']:.2f} | POC: {curr['POC']:.2f} | VAH: {curr['VAH']:.2f} | VWAP: {curr['VWAP']:.2f} | Close: {curr['Close']:.2f} | Volume: {curr['Volume']:.0f}")
-
-    st.markdown("### 🧾 Journal Export")
-    export = pd.DataFrame([{
-        "Date": curr["Date"].date(),
-        "Timeframe": tf_name,
-        "Score": score,
-        "Close": curr["Close"],
-        "POC": curr["POC"],
-        "VAL": curr["VAL"],
-        "VAH": curr["VAH"],
-        "VWAP": curr["VWAP"],
-        "Volume": curr["Volume"],
-        "Summary": "; ".join(summary),
-        "Recommendation": "; ".join(reco)
-    }])
-    st.dataframe(export)
-    st.download_button("📥 Download Summary", export.to_csv(index=False).encode('utf-8'), file_name=f"{tf_name}_bias_summary.csv")
-
-# === MAIN EXECUTION ===
-if daily_file:
-    df_daily = clean_df(pd.read_csv(daily_file))
-    if not df_daily.empty:
-        analyze(df_daily, "Daily")
-
-if fourh_file:
-    df_4h = clean_df(pd.read_csv(fourh_file))
-    if not df_4h.empty:
-        analyze(df_4h, "4H")
+else:
+    st.info("Please upload all three data files to begin.")
