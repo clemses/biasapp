@@ -1,12 +1,17 @@
 import streamlit as st
 import pandas as pd
 
-st.title("📊 Bias & Trade App – 60m Pattern Scanner")
+st.set_page_config(page_title="BiasApp 📈", layout="wide")
+st.title("🧠 Bias Decision Support App")
 
-st.sidebar.header("📁 Upload 60-Min Chart File")
-file_60m = st.sidebar.file_uploader("Upload 60-Min Chart CSV", type=["csv", "txt"])
+# --- Sidebar Uploads ---
+st.sidebar.header("📁 Upload Data Files")
+daily_file = st.sidebar.file_uploader("Upload Daily Chart CSV", type=["csv", "txt"])
+h4_file = st.sidebar.file_uploader("Upload 4H Chart CSV", type=["csv", "txt"])
+h1_file = st.sidebar.file_uploader("Upload 60-Min Chart CSV", type=["csv", "txt"])
 
-def load_data(file):
+# --- Utility Functions ---
+def load_csv(file):
     try:
         df = pd.read_csv(file)
     except:
@@ -14,7 +19,7 @@ def load_data(file):
         df = pd.read_csv(file, delimiter='\t')
     return df
 
-def clean_and_format(df):
+def preprocess(df):
     df.columns = df.columns.str.strip().str.replace('"', '')
     df.rename(columns={
         "Last": "Close",
@@ -26,55 +31,85 @@ def clean_and_format(df):
     df["Datetime"] = pd.to_datetime(df["Date"] + " " + df["Time"])
     return df.dropna(subset=["Datetime", "POC", "VAH", "VAL", "Close"]).sort_values("Datetime").reset_index(drop=True)
 
-def scan_structures(df, lookback, tolerance):
-    results = []
-    for i in range(lookback, len(df)):
-        window = df.iloc[i - lookback:i + 1].copy()
-        poc_rising = (window["POC"].diff() > 0).fillna(True)
-        poc_falling = (window["POC"].diff() < 0).fillna(True)
-        higher_lows = (window["Low"] > window["Low"].shift(1)).fillna(True)
-        lower_highs = (window["High"] < window["High"].shift(1)).fillna(True)
-        va_width = window["VAH"] - window["VAL"]
-        va_narrow = va_width < va_width.rolling(lookback).median() * 0.7
+# --- DAILY ANALYSIS ---
+if daily_file:
+    st.header("📊 Daily Bias Analysis")
+    df_daily = preprocess(load_csv(daily_file))
 
-        def pass_with_tolerance(series):
+    recent = df_daily.iloc[-1]
+    prior = df_daily.iloc[-2]
+
+    st.write("**Last Close vs Previous Day POC**")
+    st.write(f"🟢 Bullish Bias" if recent["Close"] > prior["POC"] else "🔴 Bearish Bias")
+
+    st.write("**POC Movement**")
+    st.write(f"⬆️ Rising" if recent["POC"] > prior["POC"] else "⬇️ Falling")
+
+# --- 4H ANALYSIS ---
+if h4_file:
+    st.header("⏱️ 4H Bias Comparison")
+    df_h4 = preprocess(load_csv(h4_file))
+
+    candle_choice = st.selectbox("Choose recent 4H candle to analyze", df_h4["Datetime"].dt.strftime("%Y-%m-%d %H:%M"))
+    idx = df_h4[df_h4["Datetime"].dt.strftime("%Y-%m-%d %H:%M") == candle_choice].index[0]
+    compare_to = st.radio("Compare to:", ["Previous Candle", "2 Back"])
+    ref_idx = idx - 1 if compare_to == "Previous Candle" else idx - 2
+
+    if ref_idx >= 0:
+        current = df_h4.iloc[idx]
+        ref = df_h4.iloc[ref_idx]
+        st.write("**Close vs Ref POC**")
+        st.write(f"🟢 Bullish" if current["Close"] > ref["POC"] else "🔴 Bearish")
+
+        st.write("**POC Movement**")
+        st.write(f"⬆️ Upward" if current["POC"] > ref["POC"] else "⬇️ Downward")
+
+# --- 60-MIN STRUCTURE SCAN ---
+if h1_file:
+    st.header("🔍 60-Min Structural Pattern Scanner")
+    df_h1 = preprocess(load_csv(h1_file))
+
+    lookback = st.slider("🔁 Lookback Window (candles)", 3, 12, 6)
+    tolerance = st.slider("⚙️ Tolerance (violations allowed)", 0, 3, 1)
+
+    results = []
+    for i in range(lookback, len(df_h1)):
+        win = df_h1.iloc[i - lookback:i + 1].copy()
+        poc_rise = (win["POC"].diff() > 0).fillna(True)
+        poc_fall = (win["POC"].diff() < 0).fillna(True)
+        hi_low = (win["Low"] > win["Low"].shift(1)).fillna(True)
+        lo_hi = (win["High"] < win["High"].shift(1)).fillna(True)
+        va_w = win["VAH"] - win["VAL"]
+        va_n = va_w < va_w.rolling(lookback).median() * 0.7
+
+        def tolerate(series):
             return series.sum() >= len(series) - tolerance
 
-        if pass_with_tolerance(poc_rising) and pass_with_tolerance(higher_lows):
+        if tolerate(poc_rise) and tolerate(hi_low):
             results.append({
-                "Start": window.iloc[0]["Datetime"],
-                "End": window.iloc[-1]["Datetime"],
+                "Start": win.iloc[0]["Datetime"],
+                "End": win.iloc[-1]["Datetime"],
                 "Pattern": "🟢 Bullish Structure",
-                "Entry (last close)": window.iloc[-1]["Close"]
+                "Entry (Close)": win.iloc[-1]["Close"]
             })
-        elif pass_with_tolerance(poc_falling) and pass_with_tolerance(lower_highs):
+        elif tolerate(poc_fall) and tolerate(lo_hi):
             results.append({
-                "Start": window.iloc[0]["Datetime"],
-                "End": window.iloc[-1]["Datetime"],
+                "Start": win.iloc[0]["Datetime"],
+                "End": win.iloc[-1]["Datetime"],
                 "Pattern": "🔴 Bearish Structure",
-                "Entry (last close)": window.iloc[-1]["Close"]
+                "Entry (Close)": win.iloc[-1]["Close"]
             })
-        elif pass_with_tolerance(va_narrow.fillna(False)):
+        elif tolerate(va_n.fillna(False)):
             results.append({
-                "Start": window.iloc[0]["Datetime"],
-                "End": window.iloc[-1]["Datetime"],
-                "Pattern": "⚠️ Consolidation (Narrow VA)",
-                "Entry (last close)": window.iloc[-1]["Close"]
+                "Start": win.iloc[0]["Datetime"],
+                "End": win.iloc[-1]["Datetime"],
+                "Pattern": "⚠️ Consolidation Zone",
+                "Entry (Close)": win.iloc[-1]["Close"]
             })
 
-    return pd.DataFrame(results)
-
-if file_60m:
-    df = clean_and_format(load_data(file_60m))
-
-    st.subheader("🧠 Structural Pattern Recognition")
-    lookback = st.slider("🔁 Lookback Window (candles)", 3, 12, 6)
-    tolerance = st.slider("⚙️ Pattern Tolerance (how many violations allowed)", 0, 3, 1)
-
-    pattern_df = scan_structures(df, lookback, tolerance)
-
-    if not pattern_df.empty:
-        st.success(f"✅ {len(pattern_df)} patterns detected.")
-        st.dataframe(pattern_df)
+    result_df = pd.DataFrame(results)
+    if not result_df.empty:
+        st.success(f"✅ {len(result_df)} patterns found.")
+        st.dataframe(result_df)
     else:
-        st.warning("No qualifying patterns found with the current settings.")
+        st.warning("No structural patterns found.")
