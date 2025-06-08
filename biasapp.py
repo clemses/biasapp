@@ -1,11 +1,19 @@
 import streamlit as st
 import pandas as pd
 
-st.title("📊 Bias & Trade Recommendation App")
+st.title("📊 Bias & Trade App – With Sierra Chart TXT Support")
 
 st.sidebar.header("📁 Upload Files")
-daily_file = st.sidebar.file_uploader("Upload Daily File", type=["csv"])
-h4_file = st.sidebar.file_uploader("Upload 4H File", type=["csv"])
+daily_file = st.sidebar.file_uploader("Upload Daily File", type=["csv", "txt"])
+h4_file = st.sidebar.file_uploader("Upload 4H File", type=["csv", "txt"])
+
+def load_file(file):
+    try:
+        df = pd.read_csv(file)
+    except:
+        file.seek(0)
+        df = pd.read_csv(file, delimiter='\t')  # Try tab-delimited
+    return df
 
 def clean_df(df):
     df.columns = df.columns.str.strip().str.replace('"', '')
@@ -107,10 +115,10 @@ def display_analysis(df, label="Daily"):
 
 if daily_file:
     st.subheader("📅 Daily Bias & Trades")
-    daily_df = clean_df(pd.read_csv(daily_file))
+    daily_df = clean_df(load_file(daily_file))
     display_analysis(daily_df, "Daily")
 
 if h4_file:
     st.subheader("🕓 4H Bias & Trades")
-    h4_df = clean_df(pd.read_csv(h4_file))
+    h4_df = clean_df(load_file(h4_file))
     display_analysis(h4_df, "4H")
