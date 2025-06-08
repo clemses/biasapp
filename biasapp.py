@@ -19,21 +19,38 @@ if tpo_file and h4_file and daily_file:
     try:
         def read_sierra_file(uploaded_file):
             df = pd.read_csv(uploaded_file)
-            # Fix Time column if needed
             if 'Time' not in df.columns:
                 df['Time'] = '00:00:00'
             return df
 
-        tpo_df = read_sierra_file(tpo_file)
-        h4_df = read_sierra_file(h4_file)
-        daily_df = read_sierra_file(daily_file)
+        def normalize_column_names(df):
+            rename_map = {
+                'Close': 'Last',
+                'Last Price': 'Last',
+                'LastPrice': 'Last'
+            }
+            for old, new in rename_map.items():
+                if old in df.columns and 'Last' not in df.columns:
+                    df.rename(columns={old: new}, inplace=True)
+            return df
 
-        # Format datetime columns
+        tpo_df = normalize_column_names(read_sierra_file(tpo_file))
+        h4_df = normalize_column_names(read_sierra_file(h4_file))
+        daily_df = normalize_column_names(read_sierra_file(daily_file))
+
+        # Check for critical column
+        required_columns = ['Last']
+        for name, df in {'TPO': tpo_df, '4H': h4_df, 'Daily': daily_df}.items():
+            for col in required_columns:
+                if col not in df.columns:
+                    raise ValueError(f"Missing required column '{col}' in {name} data.")
+
+        # Create datetime
         tpo_df['Datetime'] = pd.to_datetime(tpo_df['Date'] + ' ' + tpo_df['Time'])
         h4_df['Datetime'] = pd.to_datetime(h4_df['Date'] + ' ' + h4_df['Time'])
-        daily_df['Datetime'] = pd.to_datetime(daily_df['Date'] + ' ' + daily_df.get('Time', '00:00:00'))
+        daily_df['Datetime'] = pd.to_datetime(daily_df['Date'] + ' ' + daily_df['Time'])
 
-        # Sort for merge_asof
+        # Sort
         tpo_df = tpo_df.sort_values('Datetime')
         h4_df = h4_df.sort_values('Datetime')
         daily_df = daily_df.sort_values('Datetime')
