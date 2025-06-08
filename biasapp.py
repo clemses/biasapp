@@ -88,6 +88,7 @@ if daily_file:
         selected_date = st.date_input("Select Daily Candle Date", value=available_dates[-1], min_value=min(available_dates), max_value=max(available_dates))
         daily_lookback = st.slider("Lookback candles (Daily)", min_value=2, max_value=10, value=3)
 
+        st.info(f"📌 Selected Daily Date: {selected_date}, Lookback: {daily_lookback}")
         bias, reco = analyze_candle_bias(df_daily, selected_date, daily_lookback)
         if bias:
             st.markdown("### 🧠 Bias Explanation")
@@ -109,6 +110,7 @@ if fourh_file:
         selected_date = st.date_input("Select 4H Candle Date", value=available_dates[-1], key="4h_date", min_value=min(available_dates), max_value=max(available_dates))
         fourh_lookback = st.slider("Lookback candles (4H)", min_value=2, max_value=12, value=4)
 
+        st.info(f"📌 Selected 4H Date: {selected_date}, Lookback: {fourh_lookback}")
         bias, reco = analyze_candle_bias(df_4h, selected_date, fourh_lookback)
         if bias:
             st.markdown("### 🧠 Bias Explanation")
