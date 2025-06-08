@@ -13,18 +13,17 @@ This tool classifies market bias mode (Initiative vs Responsive) based on 30min 
 
 # --- Upload section ---
 tpo_file = st.file_uploader("Upload 30min TPO file (CSV or TXT from Sierra Chart)", type=["csv", "txt"])
-h4_file = st.file_uploader("Upload 4H Bias CSV file", type=["csv"])
-daily_file = st.file_uploader("Upload Daily Bias CSV file", type=["csv"])
+h4_file = st.file_uploader("Upload 4H Bias file (CSV or TXT from Sierra Chart)", type=["csv", "txt"])
+daily_file = st.file_uploader("Upload Daily Bias file (CSV or TXT from Sierra Chart)", type=["csv", "txt"])
 
 if tpo_file and h4_file and daily_file:
     try:
         def read_sierra_file(uploaded_file):
-            # Try to parse it as a CSV with comma delimiter
             return pd.read_csv(uploaded_file)
 
         tpo_df = read_sierra_file(tpo_file)
-        h4_df = pd.read_csv(h4_file)
-        daily_df = pd.read_csv(daily_file)
+        h4_df = read_sierra_file(h4_file)
+        daily_df = read_sierra_file(daily_file)
 
         # Format datetime columns
         tpo_df['Datetime'] = pd.to_datetime(tpo_df['Date'] + ' ' + tpo_df['Time'])
